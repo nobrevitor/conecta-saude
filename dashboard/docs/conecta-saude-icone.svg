@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1041" height="1041" viewBox="0 0 104.1 104.1">
+<title>Conecta Saúde — ícone</title>
+<defs><linearGradient id="cs" gradientUnits="userSpaceOnUse" x1="50" y1="-2" x2="50" y2="102"><stop offset="0" stop-color="#00A79D"></stop><stop offset="1" stop-color="#1264A3"></stop></linearGradient></defs>
+<g transform="translate(2.05 2.05)">
+<g fill="none" stroke="url(#cs)" stroke-width="4.1" stroke-linecap="round" stroke-linejoin="round">
+<path d="M70 25.15L70 7.3A7.3 7.3 0 0 0 62.7 0L37.3 0A7.3 7.3 0 0 0 30 7.3L30 25A5 5 0 0 1 25 30L7.3 30A7.3 7.3 0 0 0 0 37.3L0 62.7A7.3 7.3 0 0 0 7.3 70L24.43 70"></path>
+<path d="M30 87.35L30 92.7A7.3 7.3 0 0 0 37.3 100L62.7 100A7.3 7.3 0 0 0 70 92.7L70 75A5 5 0 0 1 75 70L92.7 70A7.3 7.3 0 0 0 100 62.7L100 47"></path>
+<path d="M36.54 68.26L55.06 58.44"></path>
+<path d="M66 51.5L87.7 35.2"></path>
+<circle cx="30.8" cy="71.3" r="6.5"></circle>
+<circle cx="60.8" cy="55.4" r="6.5"></circle>
+<circle cx="92.9" cy="31.3" r="6.5"></circle>
+</g>
+</g>
+</svg>
