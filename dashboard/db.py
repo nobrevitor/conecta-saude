@@ -178,9 +178,22 @@ def internacoes_por_uf(competencia: str, regiao=None) -> pd.DataFrame:
     sql = """
         SELECT uf, estado, regiao, internacoes, leitos_sus, populacao,
                municipios, municipios_sem_leito, pct_municipios_sem_leito,
-               permanencia_media, leitos_por_10mil_hab
+               permanencia_media, leitos_por_10mil_hab,
+               -- Demanda medida contra a capacidade instalada, e não em
+               -- volume: dias-leito consumidos sobre dias-leito ofertados
+               -- no mês. É o que permite comparar SP com RR na mesma
+               -- escala. Mesma fórmula de indicadores_gerais, aqui
+               -- reconstruída porque a Gold por UF guarda a permanência
+               -- média em vez do total de dias.
+               ROUND(internacoes * permanencia_media * 100
+                     / NULLIF(leitos_sus * 30, 0), 1)          AS ocupacao_estimada
           FROM gold_ranking_uf
          WHERE competencia = :comp
+           -- A Gold traz uma linha de UF nula por competência, resíduo de
+           -- código de município sem correspondência na tabela do IBGE.
+           -- Numa visão por UF ela não é uma UF: entraria no mapa sem
+           -- geometria e no ranking como se fosse um estado a mais.
+           AND uf IS NOT NULL
     """
     sql, params = _filtrar(sql, {"comp": competencia}, regiao)
     return query(sql + " ORDER BY internacoes DESC", params)
