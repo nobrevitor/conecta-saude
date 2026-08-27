@@ -36,7 +36,7 @@ def get_pool() -> oracledb.ConnectionPool:
         password=st.secrets["DB_PASS"],
         dsn=st.secrets["DB_DSN"],
         min=1,
-        max=4,          # bem abaixo do limite de 20 do Always Free
+        max=4,        
         increment=1,
         timeout=60,
         getmode=oracledb.POOL_GETMODE_WAIT,
@@ -635,19 +635,4 @@ def evasao(competencia: str | None, regiao=None, uf=None,
     params["limite"] = limite
     return query(
         sql + " ORDER BY taxa_evasao DESC FETCH FIRST :limite ROWS ONLY", params
-    )
-
-
-@st.cache_data(ttl=3600)
-def procedimentos(competencia: str, limite: int = 20) -> pd.DataFrame:
-    return query(
-        """
-        SELECT procedimento, grupo, complexidade, internacoes,
-               permanencia_media, valor_medio, taxa_mortalidade
-          FROM gold_procedimento
-         WHERE competencia = :comp
-         ORDER BY internacoes DESC
-         FETCH FIRST :limite ROWS ONLY
-        """,
-        {"comp": competencia, "limite": limite},
     )
