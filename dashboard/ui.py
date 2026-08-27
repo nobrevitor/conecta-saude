@@ -135,14 +135,35 @@ ALTURA_CARTAO = 404          # linha padrão
 ALTURA_CARTAO_BAIXO = 366    # linha de série temporal e tabelas
 ALTURA_CARTAO_ALTO = 486     # linha de um cartão só, largo
 
-# Desconto do cabeçalho do cartão e do respiro interno, para o gráfico
-# não empurrar o eixo para fora e criar barra de rolagem aninhada.
-_MIOLO = 96
+# Desconto do cabeçalho do cartão, do respiro interno e do afastamento
+# entre título e gráfico (.cs-cartao-topo no app.py), para o gráfico não
+# empurrar o eixo para fora e criar barra de rolagem aninhada.
+_MIOLO = 104
 
 
 def altura_util(altura_cartao: int, com_legenda: bool = False) -> int:
     """Altura que sobra para o gráfico dentro de um cartão."""
     return altura_cartao - _MIOLO - (34 if com_legenda else 0)
+
+
+# Altura que o eixo de valor consome abaixo das barras — traços, rótulos e
+# título, com folga para a última barra não empurrar nada para fora e
+# abrir barra de rolagem dentro do cartão.
+_EIXO_VALOR = 44
+
+
+def passo_barras(altura_cartao: int, categorias: int, minimo: int = 24) -> int:
+    """
+    Passo que espalha as barras por toda a altura útil do cartão.
+
+    Sem ele o passo é fixo e o gráfico termina onde os dados acabam: com
+    poucas categorias sobra meio cartão vazio embaixo. Com poucas
+    categorias o passo cresce bastante — quem segura a espessura da barra
+    é o `espessura` de barras_horizontais, e o passo vira respiro.
+    """
+    if categorias <= 0:
+        return minimo
+    return max(minimo, (altura_util(altura_cartao) - _EIXO_VALOR) // categorias)
 
 
 def painel_filtros(mostrar_porte: bool = True) -> Filtros:
@@ -210,11 +231,15 @@ def cabecalho(titulo: str, subtitulo: str, filtros: Filtros | None = None) -> No
             if filtros.porte_sql:
                 ativos.append(filtros.porte_sql)
             fichas = "".join(f'<span class="cs-ficha">{a}</span>' for a in ativos)
+        # Sem fichas o div sai da marcação: ele tem margem própria e,
+        # numa página sem fita de indicadores para encostar, isso só
+        # abriria espaço morto embaixo do subtítulo.
+        linha_fichas = f'<div class="cs-fichas">{fichas}</div>' if fichas else ""
         st.markdown(
             f'<div class="cs-cabecalho">'
             f'<div class="cs-titulo">{titulo}</div>'
             f'<div class="cs-subtitulo">{subtitulo}</div>'
-            f'<div class="cs-fichas">{fichas}</div>'
+            f"{linha_fichas}"
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -225,6 +250,13 @@ def cabecalho(titulo: str, subtitulo: str, filtros: Filtros | None = None) -> No
             st.rerun()
 
 
+# Espaço de largura zero, para reservar a linha da variação sem desenhar
+# nada nela. Não serve espaço comum nem NBSP: o st.metric passa o delta
+# por textwrap.dedent, que a partir do Python 3.13 apaga linha composta
+# só de espaço em branco — e os dois se enquadram nisso, o U+200B não.
+_DELTA_VAZIO = "​"
+
+
 def fita_indicadores(itens) -> None:
     """
     Fita de KPIs no topo.
@@ -233,11 +265,35 @@ def fita_indicadores(itens) -> None:
     de método vai em `help`, e não numa legenda solta embaixo: no arranjo
     em grade um parágrafo de texto entre a fita e a primeira linha de
     cartões empurra tudo para baixo e quebra o alinhamento.
+
+    Todos os cartões terminam na mesma linha, mesmo quando um cresce por
+    rótulo em duas linhas ou por ter `delta` onde os vizinhos não têm.
+    Duas travas sustentam isso, porque só o CSS já se mostrou frágil:
+
+    · `height="stretch"` manda o próprio Streamlit esticar o cartão até a
+      altura da coluna, que por sua vez acompanha a mais alta da linha;
+
+    · a linha da variação é reservada nos cartões sem `delta`, com um
+      espaço rígido, sem seta e sem cor. Assim os cinco cartões têm a
+      mesma estrutura e a mesma altura natural, com CSS ou sem ele.
+
+    O contêiner nomeado dá a classe `st-key-fita_indicadores`, gancho do
+    CSS que acompanha essas duas travas no app.py.
     """
-    colunas = st.columns(len(itens), gap="small")
+    itens = list(itens)
+    if any(item.get("delta") for item in itens):
+        itens = [
+            item if item.get("delta")
+            else {**item, "delta": _DELTA_VAZIO, "delta_color": "off",
+                  "delta_arrow": "off"}
+            for item in itens
+        ]
+
+    faixa = st.container(key="fita_indicadores")
+    colunas = faixa.columns(len(itens), gap="small")
     for coluna, item in zip(colunas, itens):
         with coluna:
-            st.metric(border=True, **item)
+            st.metric(border=True, height="stretch", **item)
 
 
 def painel(titulo: str, descricao: str | None = None, *,
@@ -364,7 +420,7 @@ def barras_horizontais(dados: pd.DataFrame, categoria: str, valor: str,
                        rotulo: str, *, titulo_valor: str = "",
                        titulo_categoria: str | None = None,
                        cor_por: str | None = None, dicas=(), passo: int = 24,
-                       ordenar: bool = True):
+                       espessura: int | None = None, ordenar: bool = True):
     """
     Barras horizontais ordenadas por volume, com o número no fim da barra.
 
@@ -372,6 +428,10 @@ def barras_horizontais(dados: pd.DataFrame, categoria: str, valor: str,
     notação SI e o rótulo direto no padrão brasileiro. `cor_por` só deve
     ser usado quando a cor carrega significado — sem ele, todas as
     barras saem na cor principal da marca.
+
+    `espessura` desliga a regra de a barra preencher a faixa: com o passo
+    calculado por passo_barras, poucas categorias dariam barras enormes.
+    Fixando a espessura, o passo sobrando vira espaço entre as barras.
     """
     ordem = alt.EncodingSortField(field=valor, order="descending") if ordenar else None
 
@@ -382,13 +442,15 @@ def barras_horizontais(dados: pd.DataFrame, categoria: str, valor: str,
         tooltip=list(dicas),
     )
 
+    tamanho = {"size": espessura} if espessura else {}
+
     if cor_por:
-        barras = base.mark_bar(cornerRadiusEnd=4).encode(
+        barras = base.mark_bar(cornerRadiusEnd=4, **tamanho).encode(
             color=alt.Color(f"{cor_por}:N", scale=ESCALA_FAIXA, sort=FAIXAS_ORDEM,
                             legend=alt.Legend(title=None, orient="top")),
         )
     else:
-        barras = base.mark_bar(cornerRadiusEnd=4, color=COR_PRINCIPAL)
+        barras = base.mark_bar(cornerRadiusEnd=4, color=COR_PRINCIPAL, **tamanho)
 
     texto = base.mark_text(
         align="left", baseline="middle", dx=6, fontSize=11, color=COR_TINTA_SUAVE,

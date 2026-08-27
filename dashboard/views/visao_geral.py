@@ -118,7 +118,9 @@ with regiao_col:
         bloco.altair_chart(
             ui.barras_horizontais(
                 dados_regiao, "regiao", "internacoes", "rotulo",
-                titulo_valor="Internações", passo=42,
+                titulo_valor="Internações",
+                passo=ui.passo_barras(ui.ALTURA_CARTAO, len(dados_regiao)),
+                espessura=38,
                 dicas=[ui.alt.Tooltip("regiao:N", title=""),
                        ui.alt.Tooltip("rotulo:N", title="Internações"),
                        ui.alt.Tooltip("leitos:N", title="Leitos SUS")],
@@ -147,7 +149,9 @@ with gestao_col:
         bloco.altair_chart(
             ui.barras_horizontais(
                 gestao, "tipo_gestao", "leitos_sus", "rotulo",
-                titulo_valor="Leitos SUS", passo=42,
+                titulo_valor="Leitos SUS",
+                passo=ui.passo_barras(ui.ALTURA_CARTAO, len(gestao)),
+                espessura=38,
                 dicas=[ui.alt.Tooltip("tipo_gestao:N", title=""),
                        ui.alt.Tooltip("rotulo:N", title="Leitos SUS"),
                        ui.alt.Tooltip("estab:N", title="Estabelecimentos")],

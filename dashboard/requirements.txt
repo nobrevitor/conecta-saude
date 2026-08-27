@@ -1,8 +1,8 @@
 # Extração e tratamento dos dados públicos do DATASUS
-pandas>=2.2
-pyarrow>=17.0
-datasus-dbc>=0.1
-dbfread>=2.0
-ipykernel>=6.29
-jupyterlab>=4.2
-
+pandas
+pyarrow
+datasus-dbc
+dbfread
+ipykernel
+jupyterlab
+oracledb

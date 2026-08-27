@@ -39,8 +39,11 @@ st.markdown(
     """
     <style>
       /* ---------- Tela ---------- */
+      /* O cabeçalho do Streamlit é uma faixa opaca de 3.75rem sobreposta
+         ao topo da área principal. Sem somá-la ao respiro, a primeira
+         linha da página sai escondida atrás dele. */
       .block-container {
-          padding: 1.1rem 1.5rem 1.5rem;
+          padding: calc(3.75rem + 0.6rem) 1.5rem 1.5rem;
           max-width: 1760px;
       }
       /* Grade apertada: o padrão do Streamlit separa blocos como texto
@@ -55,15 +58,48 @@ st.markdown(
           letter-spacing: -0.01em;
       }
       .cs-subtitulo { font-size: 0.78rem; color: #5A6B75; margin-top: 1px; }
-      .cs-fichas { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+      /* As fichas do recorte (o `filtros` passado a ui.cabecalho) ficam
+         inteiras no cabeçalho, logo acima do primeiro cartão — sem puxar
+         a fita de indicadores para cima. Toda tentativa de encostar uma
+         na outra por margem negativa acabou em sobreposição, porque o
+         espaço que a grade deixa entre as duas linhas é bem menor do que
+         o gap nominal. O z-index fica como garantia: se sobrar 1px de
+         encontro, quem passa na frente é a ficha, nunca o cartão. */
+      .cs-fichas {
+          display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px;
+          position: relative;
+      }
       .cs-ficha {
           font-size: 0.69rem; font-weight: 600; letter-spacing: 0.02em;
           color: #0F5C73; background: #E8F1F4; border: 1px solid #D3E3E9;
-          border-radius: 999px; padding: 2px 9px;
+          border-bottom: none;
+          border-radius: 8px 8px 0 0;
+          padding: 2px 9px 7px;
       }
 
       /* ---------- Fita de indicadores ---------- */
+      /* Cartão com `delta` ao lado de outro sem, ou rótulo que quebra em
+         duas linhas: a fita terminava em degrau. Esticar a coluna inteira
+         alinha todos pelo mais alto, sem fixar altura em pixel.
+         O gancho é a classe do contêiner nomeado em ui.fita_indicadores.
+         Antes isto saía de `:has()`, que casa a mesma pilha em uma linha
+         só — mas basta o seletor não pegar para o alinhamento sumir sem
+         aviso, e some justamente nas páginas em que os cartões não são
+         naturalmente iguais. Por nome é verboso e não falha calado. */
+      .st-key-fita_indicadores [data-testid="stHorizontalBlock"] {
+          align-items: stretch;
+      }
+      /* A altura tem de atravessar toda a pilha de invólucros entre a
+         coluna e o cartão; um elo em altura automática já interrompe a
+         esticada. O `> div` cobre invólucro sem data-testid próprio. */
+      .st-key-fita_indicadores [data-testid="stColumn"],
+      .st-key-fita_indicadores [data-testid="stColumn"] > div,
+      .st-key-fita_indicadores [data-testid="stVerticalBlock"],
+      .st-key-fita_indicadores [data-testid="stElementContainer"] {
+          height: 100%;
+      }
       [data-testid="stMetric"] {
+          height: 100%;
           background: #FFFFFF;
           border: 1px solid #E3EAED;
           border-radius: 8px;
@@ -77,6 +113,12 @@ st.markdown(
           font-size: 1.42rem; font-weight: 640; letter-spacing: -0.01em;
       }
       [data-testid="stMetricDelta"] { font-size: 0.71rem; }
+      /* O primeiro cartão recebe as fichas encaixadas no topo: canto reto
+         do lado esquerdo para a emenda com elas ficar contínua. */
+      .st-key-fita_indicadores [data-testid="stColumn"]:first-child
+        [data-testid="stMetric"] {
+          border-top-left-radius: 0;
+      }
 
       /* ---------- Cartões da grade ---------- */
       /* A borda vem do próprio st.container(border=True); daqui sai só o
@@ -85,7 +127,10 @@ st.markdown(
           box-shadow: 0 1px 2px rgba(15, 92, 115, 0.05);
           border-radius: 8px;
       }
-      .cs-cartao-topo { margin-bottom: 0.15rem; }
+      /* Respiro entre o título do cartão e o gráfico. Vale para todos
+         os cartões porque todos passam por ui.painel; o desconto na
+         altura útil está no _MIOLO de ui.py. */
+      .cs-cartao-topo { margin-bottom: 0.6rem; }
       .cs-cartao-titulo {
           font-size: 0.82rem; font-weight: 650; color: #1F2933;
           letter-spacing: -0.005em;
