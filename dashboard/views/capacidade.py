@@ -28,7 +28,7 @@ ui.cabecalho(
     filtros,
 )
 
-atual = db.indicadores_gerais(filtros.competencia, filtros.regiao_sql, filtros.uf_sql)
+atual = db.indicadores_gerais(filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql)
 
 if atual.empty:
     ui.bloco_vazio()
@@ -39,7 +39,7 @@ if atual.empty:
 # ---------------------------------------------------------------------
 
 faixas = db.distribuicao_faixas(
-    filtros.competencia, filtros.regiao_sql, filtros.uf_sql, filtros.porte_sql
+    filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql, filtros.porte_sql
 )
 
 criticos = 0
@@ -83,7 +83,7 @@ with col_capacidade:
     bloco = ui.painel("Capacidade e demanda", "Leitos SUS contra internações",
                       chave="capdem", altura=ui.ALTURA_CARTAO)
     capacidade = db.capacidade_x_demanda(
-        filtros.competencia, filtros.regiao_sql, filtros.uf_sql
+        filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql
     )
     if capacidade.empty:
         bloco.info("Sem dados.")
@@ -91,13 +91,19 @@ with col_capacidade:
         capacidade = capacidade.assign(
             rot_leitos=lambda d: d["leitos_sus"].map(ui.num),
             rot_internacoes=lambda d: d["internacoes"].map(ui.num),
+            rot_giro=lambda d: d["internacoes_por_leito"].map(
+                lambda v: f"{ui.num(v, 1)} por leito"),
         )
+        # As duas medidas dividem o eixo: a barra larga é a demanda e a
+        # fina, por cima, a capacidade que a absorveu. Nesta agregação os
+        # leitos ficam em torno de um terço das internações, então a
+        # sobreposição compara comprimentos sem esconder a série menor.
         bloco.altair_chart(
-            ui.barras_pareadas(
+            ui.barras_sobrepostas(
                 capacidade, "dimensao",
                 [("leitos_sus", "Leitos SUS", "rot_leitos"),
                  ("internacoes", "Internações", "rot_internacoes")],
-                passo=38,
+                passo=38, dicas_extra=[("rot_giro", "Giro")],
             ),
             width="stretch", theme=None,
         )
@@ -105,7 +111,7 @@ with col_capacidade:
 with col_matriz:
     bloco = ui.painel("Matriz de pressão", "Municípios por região e faixa do ICPA",
                       chave="matriz", altura=ui.ALTURA_CARTAO)
-    matriz = db.matriz_pressao(filtros.competencia)
+    matriz = db.matriz_pressao(filtros.competencia_sql)
     if matriz.empty:
         bloco.info("Sem dados.")
     else:
@@ -209,7 +215,7 @@ bloco = ui.painel(
 
 with bloco:
     ranking = db.ranking_sobrecarga(
-        filtros.competencia, filtros.regiao_sql, filtros.uf_sql,
+        filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql,
         filtros.porte_sql, limite=30,
     )
     if ranking.empty:
@@ -281,7 +287,7 @@ with col_vazios:
                       "Sem leito SUS e acima de 10 mil habitantes",
                       chave="vazios", altura=ui.ALTURA_CARTAO)
     vazios = db.vazios_assistenciais(
-        filtros.competencia, filtros.regiao_sql, filtros.uf_sql
+        filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql
     )
     if vazios.empty:
         bloco.info("Nenhum município nesta condição no recorte.")
@@ -313,7 +319,7 @@ with col_hospitais:
                       "Hospitais com 50 ou mais internações",
                       chave="hospitais", altura=ui.ALTURA_CARTAO)
     hospitais = db.hospitais_criticos(
-        filtros.competencia, filtros.regiao_sql, filtros.uf_sql
+        filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql
     )
     if hospitais.empty:
         bloco.info("Sem hospitais que atendam aos critérios.")
@@ -370,7 +376,7 @@ with col_evasao:
                       "Internações fora do município de residência",
                       chave="evasao", altura=ui.ALTURA_CARTAO)
     dados_evasao = db.evasao(
-        filtros.competencia, filtros.regiao_sql, filtros.uf_sql, minimo=100
+        filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql, minimo=100
     )
     if dados_evasao.empty:
         bloco.info("Sem dados.")

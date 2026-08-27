@@ -27,8 +27,8 @@ ui.cabecalho(
 # Fita de indicadores
 # ---------------------------------------------------------------------
 
-atual = db.indicadores_gerais(filtros.competencia, filtros.regiao_sql, filtros.uf_sql)
-anterior = db.variacao_anterior(filtros.competencia, filtros.regiao_sql, filtros.uf_sql)
+atual = db.indicadores_gerais(filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql)
+anterior = db.variacao_anterior(filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql)
 
 
 def delta(campo: str, casas: int = 1) -> str | None:
@@ -82,7 +82,7 @@ with mapa_col:
         "Ocupação por UF", "Demanda contra os leitos de cada estado",
         chave="mapa_uf", altura=ui.ALTURA_CARTAO,
     )
-    dados_uf = db.internacoes_por_uf(filtros.competencia, filtros.regiao_sql)
+    dados_uf = db.internacoes_por_uf(filtros.competencia_sql, filtros.regiao_sql)
     if dados_uf.empty:
         bloco.info("Sem dados.")
     else:
@@ -107,7 +107,7 @@ with mapa_col:
 with regiao_col:
     bloco = ui.painel("Internações por região", chave="reg",
                       altura=ui.ALTURA_CARTAO)
-    dados_regiao = db.internacoes_por_regiao(filtros.competencia)
+    dados_regiao = db.internacoes_por_regiao(filtros.competencia_sql)
     if dados_regiao.empty:
         bloco.info("Sem dados.")
     else:
@@ -130,7 +130,7 @@ with gestao_col:
     bloco = ui.painel("Leitos por tipo de gestão", chave="gestao",
                       altura=ui.ALTURA_CARTAO)
     gestao = db.leitos_por_tipo_gestao(
-        filtros.competencia, filtros.regiao_sql, filtros.uf_sql
+        filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql
     )
     if gestao.empty:
         bloco.info("Sem dados.")
