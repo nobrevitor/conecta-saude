@@ -20,7 +20,6 @@ do Streamlit Community Cloud.
 
 from __future__ import annotations
 
-import os
 import oracledb
 import pandas as pd
 import streamlit as st
@@ -30,27 +29,14 @@ import streamlit as st
 # Conexão
 # ---------------------------------------------------------------------
 
-def _config(nome: str) -> str:
-    valor = os.getenv(nome)
-    if valor:
-        return valor
-
-    try:
-        return st.secrets[nome]
-    except (KeyError, FileNotFoundError) as erro:
-        raise RuntimeError(
-            f"Configuração ausente: defina {nome} como variável de ambiente "
-            "no Render ou em .streamlit/secrets.toml para rodar localmente."
-        ) from erro
-
 @st.cache_resource(show_spinner=False)
 def get_pool() -> oracledb.ConnectionPool:
     return oracledb.create_pool(
-        user=_config("DB_USER"),
-        password=_config("DB_PASS"),
-        dsn=_config("DB_DSN"),
+        user=st.secrets["DB_USER"],
+        password=st.secrets["DB_PASS"],
+        dsn=st.secrets["DB_DSN"],
         min=1,
-        max=4,        
+        max=4,          
         increment=1,
         timeout=60,
         getmode=oracledb.POOL_GETMODE_WAIT,
