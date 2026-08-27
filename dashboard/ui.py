@@ -8,6 +8,7 @@ que cada view cuide só do que é específico dela.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -670,6 +671,7 @@ def dispersao(dados: pd.DataFrame, x: str, y: str, *, tamanho: str, cor: str,
 # ---------------------------------------------------------------------
 
 MALHA_UF = Path(__file__).parent / "geo" / "malha_uf_ibge.json"
+MALHA_MUNICIPIOS = Path(__file__).parent / "geo" / "municipios"
 
 # A malha do IBGE identifica a UF pelo código numérico; a camada Gold, pela
 # sigla. São 27 pares fixos — mesa de tradução, não dado a consultar.
@@ -699,6 +701,23 @@ def carregar_malha_uf() -> dict:
             feicao["properties"]["uf"] = sigla
             feicoes.append(feicao)
     return {"type": "FeatureCollection", "features": feicoes}
+
+
+@st.cache_data(show_spinner=False)
+def carregar_malha_municipios(uf: str) -> dict:
+    """
+    Contorno dos municípios de uma UF, um arquivo por estado.
+
+    A malha municipal do país inteiro tem 3,1 MB e 5.570 feições. Carregar
+    tudo para desenhar um estado custaria memória que o plano gratuito não
+    tem de sobra, e o painel só desenha municípios quando há uma UF
+    escolhida — então o recorte por arquivo acompanha o recorte da tela.
+    As feições trazem o código do IBGE em properties.codarea.
+    """
+    arquivo = MALHA_MUNICIPIOS / f"{uf}.json"
+    if not arquivo.exists():
+        return {"type": "FeatureCollection", "features": []}
+    return json.loads(arquivo.read_text(encoding="utf-8"))
 
 
 # Faixas de ocupação estimada, na ordem em que a gravidade cresce.
@@ -741,30 +760,51 @@ def faixa_ocupacao(valor) -> tuple[str, str, str, str]:
     return FAIXAS_OCUPACAO[-1][1:]
 
 
+# Faixas do ICPA, mesmos cortes do gold_icpa_classificado (03_gold.sql) e
+# mesmas cores que a página de capacidade usa nas barras e na matriz: a
+# mesma faixa não pode trocar de cor entre duas telas do mesmo painel.
+#
+# Elas existem porque a escala de ocupação NÃO desce ao município. Os
+# cortes de ocupação foram calibrados para UF, cuja mediana ronda os 50%;
+# a mediana municipal é de 25%, e 73% dos municípios com leito cairiam em
+# "Folga". O mapa sairia verde quase inteiro, dizendo o contrário do que
+# o dado diz. O ICPA já nasce normalizado dentro da competência.
+FAIXAS_ICPA = (
+    (20, "Baixa", "○", "ICPA até 20", CORES_FAIXA["Baixa"]),
+    (40, "Moderada", "◔", "20 a 40", CORES_FAIXA["Moderada"]),
+    (60, "Alta", "◕", "40 a 60", CORES_FAIXA["Alta"]),
+    (None, "Crítica", "●", "Acima de 60", CORES_FAIXA["Crítica"]),
+)
+
+# Município sem leito SUS ou sem produção hospitalar não entra no índice.
+# Cinza, nunca a cor da faixa baixa: ausência de serviço não é pressão
+# baixa — é a própria tese do projeto.
+FORA_DO_INDICE = ("Sem leito SUS ou sem produção", "—", "", "#E2E8EB")
+
+
+def faixa_icpa(valor) -> tuple[str, str, str, str]:
+    """Devolve (rótulo, glifo, texto da faixa, cor) para um ICPA."""
+    if valor is None or pd.isna(valor):
+        return FORA_DO_INDICE
+    for teto, rotulo, glifo, texto, cor in FAIXAS_ICPA:
+        if teto is None or valor < teto:
+            return rotulo, glifo, texto, cor
+    return FAIXAS_ICPA[-1][1:]
+
+
 def _rgba(cor_hex: str, alfa: int = 235) -> list[int]:
     cor_hex = cor_hex.lstrip("#")
     return [int(cor_hex[i:i + 2], 16) for i in (0, 2, 4)] + [alfa]
 
 
-def legenda_faixas(titulo: str, incluir_sem_dado: bool = False,
-                   incluir_fora: bool = False) -> str:
+def _legenda(titulo: str, itens) -> str:
     """
-    Legenda discreta das faixas.
+    Legenda discreta, no formato (glifo, rótulo, intervalo, cor).
 
     Cor de status nunca anda sozinha: cada faixa aparece com glifo,
     nome e o intervalo numérico. Quem não distingue verde de vermelho
     continua lendo o mapa pelo glifo e pela dica de contexto.
     """
-    itens = [
-        (glifo, rotulo, texto, cor)
-        for _, rotulo, glifo, texto, cor in FAIXAS_OCUPACAO
-    ]
-    if incluir_sem_dado:
-        rotulo, glifo, texto, cor = SEM_DADO
-        itens.append((glifo, rotulo, texto, cor))
-    if incluir_fora:
-        rotulo, glifo, texto, cor = FORA_DO_RECORTE
-        itens.append((glifo, rotulo, texto, cor))
 
     def bloco(glifo: str, rotulo: str, texto: str, cor: str) -> str:
         intervalo = f'<span style="opacity:.65">{texto}</span>' if texto else ""
@@ -783,6 +823,173 @@ def legenda_faixas(titulo: str, incluir_sem_dado: bool = False,
         f'<div style="margin-bottom:3px">{titulo}</div>'
         '<div style="display:flex;flex-wrap:wrap;gap:10px 14px">'
         f"{blocos}</div></div>"
+    )
+
+
+def legenda_faixas(titulo: str, incluir_sem_dado: bool = False,
+                   incluir_fora: bool = False) -> str:
+    """Legenda do mapa por UF: faixas de ocupação e os dois cinzas."""
+    itens = [
+        (glifo, rotulo, texto, cor)
+        for _, rotulo, glifo, texto, cor in FAIXAS_OCUPACAO
+    ]
+    if incluir_sem_dado:
+        rotulo, glifo, texto, cor = SEM_DADO
+        itens.append((glifo, rotulo, texto, cor))
+    if incluir_fora:
+        rotulo, glifo, texto, cor = FORA_DO_RECORTE
+        itens.append((glifo, rotulo, texto, cor))
+    return _legenda(titulo, itens)
+
+
+def legenda_icpa(titulo: str, incluir_fora_do_indice: bool = False) -> str:
+    """Legenda do mapa por município: faixas do ICPA e o fora do índice."""
+    itens = [
+        (glifo, rotulo, texto, cor)
+        for _, rotulo, glifo, texto, cor in FAIXAS_ICPA
+    ]
+    if incluir_fora_do_indice:
+        rotulo, glifo, texto, cor = FORA_DO_INDICE
+        itens.append((glifo, rotulo, texto, cor))
+    return _legenda(titulo, itens)
+
+
+# Largura presumida do cartão do mapa, em pixels. A altura vem da grade e
+# é conhecida; a largura não, porque a coluna é fluida. Presumir uma
+# largura curta deixa margem sobrando em tela larga — que é o erro barato.
+# O contrário cortaria o estado pelas laterais, e mapa cortado não é mapa.
+_LARGURA_MAPA = 440
+
+# Tamanho do tile do deck.gl: no zoom z o mundo inteiro tem 512 · 2^z px.
+_TILE = 512
+
+
+def _mercator(latitude: float) -> float:
+    """Latitude em fração vertical do mundo, na projeção do mapa."""
+    latitude = max(min(latitude, 85.0), -85.0)
+    return math.log(math.tan(math.pi / 4 + math.radians(latitude) / 2))
+
+
+@st.cache_data(show_spinner=False)
+def limites_municipios(uf: str) -> tuple[float, float, float, float] | None:
+    """Caixa (oeste, sul, leste, norte) que cobre os municípios da UF."""
+    lons: list[float] = []
+    lats: list[float] = []
+
+    def coletar(coordenadas) -> None:
+        # GeoJSON aninha coordenadas em profundidade variável (Polygon e
+        # MultiPolygon diferem em um nível), então a descida é genérica:
+        # par de números é ponto, qualquer outra coisa é lista de partes.
+        if coordenadas and isinstance(coordenadas[0], (int, float)):
+            lons.append(coordenadas[0])
+            lats.append(coordenadas[1])
+            return
+        for parte in coordenadas:
+            coletar(parte)
+
+    for feicao in carregar_malha_municipios(uf)["features"]:
+        coletar(feicao["geometry"]["coordinates"])
+    if not lons:
+        return None
+    return min(lons), min(lats), max(lons), max(lats)
+
+
+def _vista(limites, altura: int) -> pdk.ViewState:
+    """
+    Enquadramento que cabe a caixa inteira dentro do cartão.
+
+    O zoom sai do menor entre o que a largura permite e o que a altura
+    permite: fechar pelo maior encheria o cartão e cortaria o estado no
+    outro eixo. Estados largos (o Pará) fecham pela largura; estados
+    compridos (o Amazonas, o Rio Grande do Sul) fecham pela altura.
+    """
+    if limites is None:
+        return pdk.ViewState(latitude=-14.5, longitude=-53.0, zoom=2.4,
+                             min_zoom=2, max_zoom=9)
+    oeste, sul, leste, norte = limites
+    # 8% de folga para o contorno não encostar na borda do cartão.
+    vao_lon = max((leste - oeste) * 1.08, 1e-6)
+    vao_y = max((_mercator(norte) - _mercator(sul)) / (2 * math.pi) * 1.08, 1e-9)
+    zoom = min(math.log2(_LARGURA_MAPA * 360 / (_TILE * vao_lon)),
+               math.log2(altura / (_TILE * vao_y)))
+    # O centro vertical é o meio da caixa JÁ projetada, e não a média das
+    # latitudes: em Mercator os graus de cima são mais altos que os de
+    # baixo, e a média crua desloca o estado para fora do quadro.
+    y_centro = (_mercator(norte) + _mercator(sul)) / 2
+    return pdk.ViewState(
+        latitude=math.degrees(2 * math.atan(math.exp(y_centro)) - math.pi / 2),
+        longitude=(oeste + leste) / 2,
+        zoom=max(2.0, min(round(zoom, 2), 9.0)),
+        min_zoom=2, max_zoom=9,
+    )
+
+
+class _DeckCompacto(pdk.Deck):
+    """
+    Deck que serializa sem indentação.
+
+    O pydeck escreve o JSON com indent=2 e o Streamlit manda essa string
+    inteira ao navegador a cada rerun. Num mapa de 853 municípios a
+    indentação sozinha responde por três quartos do payload — 2,4 MB
+    contra 0,6 MB, em cada troca de filtro.
+
+    O to_json do pydeck é reaproveitado, e não substituído: são os
+    serializadores dele que produzem o `@@type` da camada e as expressões
+    que leem properties. Daqui sai só o espaço em branco. Se um dia a
+    saída deixar de ser JSON parseável, devolve-se a original — payload
+    grande é ruim, mapa quebrado é pior.
+    """
+
+    def to_json(self) -> str:
+        bruto = super().to_json()
+        try:
+            return json.dumps(json.loads(bruto), separators=(",", ":"))
+        except ValueError:
+            return bruto
+
+
+def _deck_coropletico(feicoes, campos, *, rotulo_medida: str, altura: int,
+                      vista: pdk.ViewState, identificador: str,
+                      espessura_linha: float = 1) -> pdk.Deck:
+    """
+    Camada, dica de contexto e enquadramento — o que os dois mapas têm em
+    comum.
+
+    Toda feição chega com as mesmas chaves PLANAS em properties: `titulo`,
+    `situacao`, `medida` e `cor`, mais uma por campo de contexto. O
+    interpolador do tooltip do Streamlit resolve `{chave}` contra
+    properties[chave] e não aceita caminho pontilhado — nada aqui pode
+    ser aninhado.
+
+    O `id` da camada não é decoração: é por ele que o st.pydeck_chart
+    devolve a seleção, quando o mapa passar a responder ao clique.
+    """
+    linhas_dica = "".join(
+        f'<div style="opacity:.75">{titulo}: <b>{{{coluna}}}</b></div>'
+        for coluna, titulo in campos
+    )
+    return _DeckCompacto(
+        layers=[pdk.Layer(
+            "GeoJsonLayer",
+            id=identificador,
+            data={"type": "FeatureCollection", "features": feicoes},
+            stroked=True, filled=True, pickable=True,
+            get_fill_color="properties.cor",
+            get_line_color=[255, 255, 255],
+            line_width_min_pixels=espessura_linha,
+        )],
+        initial_view_state=vista,
+        map_style=None,
+        tooltip={
+            "html": (
+                '<div style="font-size:12px"><b>{titulo}</b> · {situacao}'
+                f'<div style="opacity:.75">{rotulo_medida}: <b>{{medida}}</b></div>'
+                f"{linhas_dica}</div>"
+            ),
+            "style": {"backgroundColor": "#1F2933", "color": "#FFFFFF",
+                      "borderRadius": "6px", "padding": "8px 10px"},
+        },
+        height=altura,
     )
 
 
@@ -837,9 +1044,10 @@ def mapa_uf(dados: pd.DataFrame, valor: str, campos, *,
 
         propriedades = {
             "uf": sigla,
+            "titulo": sigla,
             "situacao": f"{glifo} {rotulo}",
-            "ocupacao": "—" if bruto is None or pd.isna(bruto) or bruto <= 0
-                        else pct(bruto),
+            "medida": "—" if bruto is None or pd.isna(bruto) or bruto <= 0
+                      else pct(bruto),
             "cor": _rgba(cor, 235 if linha is not None else 140),
         }
         if linha is None:
@@ -853,37 +1061,80 @@ def mapa_uf(dados: pd.DataFrame, valor: str, campos, *,
             "properties": propriedades,
         })
 
-    linhas_dica = "".join(
-        f'<div style="opacity:.75">{titulo}: <b>{{{coluna}}}</b></div>'
-        for coluna, titulo in campos
-    )
-    deck = pdk.Deck(
-        layers=[pdk.Layer(
-            "GeoJsonLayer",
-            data={"type": "FeatureCollection", "features": feicoes},
-            stroked=True, filled=True, pickable=True,
-            get_fill_color="properties.cor",
-            get_line_color=[255, 255, 255],
-            line_width_min_pixels=1,
-        )],
-        initial_view_state=pdk.ViewState(
-            latitude=-14.5, longitude=-53.0, zoom=2.4, min_zoom=2, max_zoom=6,
-        ),
-        map_style=None,
-        tooltip={
-            "html": (
-                '<div style="font-size:12px"><b>{uf}</b> · {situacao}'
-                '<div style="opacity:.75">Ocupação estimada: <b>{ocupacao}</b></div>'
-                f"{linhas_dica}</div>"
-            ),
-            "style": {"backgroundColor": "#1F2933", "color": "#FFFFFF",
-                      "borderRadius": "6px", "padding": "8px 10px"},
-        },
-        height=altura,
+    deck = _deck_coropletico(
+        feicoes, campos, rotulo_medida="Ocupação estimada", altura=altura,
+        vista=pdk.ViewState(latitude=-14.5, longitude=-53.0, zoom=2.4,
+                            min_zoom=2, max_zoom=6),
+        identificador="ufs",
     )
     return deck, legenda_faixas(titulo_legenda or "Ocupação estimada",
                                 incluir_sem_dado=houve_sem_dado,
                                 incluir_fora=houve_fora)
+
+
+def mapa_municipios(dados: pd.DataFrame, uf: str, valor: str, campos, *,
+                    titulo_legenda: str = "", altura: int = 340):
+    """
+    Coroplético dos municípios de uma UF pela faixa do ICPA. Devolve
+    (deck, legenda), como o mapa por estado.
+
+    É o mesmo cartão do mapa por UF, um nível abaixo: quando o filtro
+    escolhe um estado, a pergunta deixa de ser "qual estado aperta" e
+    passa a ser "onde, dentro dele". A medida muda junto, e não por
+    capricho — ver o comentário de FAIXAS_ICPA.
+
+    Município fora do índice sai em cinza. Ele é maioria em boa parte do
+    país, e é o achado central do projeto: contorno vazio no mapa é
+    ausência de serviço, não falta de dado.
+
+    A junção com a malha é pelo código do IBGE de sete dígitos, que a
+    consulta traz em `cod_ibge` — a Gold guarda o do DATASUS, de seis.
+    """
+    malha = carregar_malha_municipios(uf)
+    medida = pd.to_numeric(dados[valor], errors="coerce")
+    por_codigo = {
+        str(linha["cod_ibge"]): linha
+        for _, linha in dados.assign(**{valor: medida}).iterrows()
+    }
+
+    feicoes, houve_fora = [], False
+    for feicao in malha["features"]:
+        codigo = str(feicao["properties"]["codarea"])
+        linha = por_codigo.get(codigo)
+        bruto = None if linha is None else linha[valor]
+        rotulo, glifo, _, cor = faixa_icpa(bruto)
+        if rotulo == FORA_DO_INDICE[0]:
+            houve_fora = True
+
+        propriedades = {
+            "cod_ibge": codigo,
+            "titulo": codigo if linha is None else str(linha["municipio"]),
+            "situacao": f"{glifo} {rotulo}",
+            "medida": "—" if bruto is None or pd.isna(bruto) else num(bruto, 1),
+            "cor": _rgba(cor, 235 if linha is not None else 140),
+        }
+        if linha is None:
+            propriedades.update({coluna: "—" for coluna, _ in campos})
+        else:
+            propriedades.update({coluna: str(linha[coluna]) for coluna, _ in campos})
+
+        feicoes.append({
+            "type": "Feature",
+            "geometry": feicao["geometry"],
+            "properties": propriedades,
+        })
+
+    deck = _deck_coropletico(
+        feicoes, campos, rotulo_medida="ICPA", altura=altura,
+        vista=_vista(limites_municipios(uf), altura),
+        identificador="municipios",
+        # Contorno mais fino que o do mapa por estado: com centenas de
+        # municípios no mesmo quadro, a linha de 1px come o preenchimento
+        # e o mapa vira uma malha branca.
+        espessura_linha=0.4,
+    )
+    return deck, legenda_icpa(titulo_legenda or "Faixa de pressão (ICPA)",
+                              incluir_fora_do_indice=houve_fora)
 
 
 # ---------------------------------------------------------------------

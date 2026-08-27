@@ -122,16 +122,20 @@ def _competencia(sql: str, params: dict, competencia: str | None,
     return sql, params
 
 
-def _por_mes(expressao: str, competencia: str | None) -> str:
+def _por_mes(expressao: str, competencia: str | None, alias: str = "") -> str:
     """
     Média mensal quando o recorte é o ano inteiro, valor cru quando é um
     mês só. O divisor sai dos próprios dados, e não de uma constante 12,
     para acompanhar o recorte: se um filtro deixar oito meses, divide por
     oito.
+
+    O `alias` é obrigatório onde a consulta junta duas tabelas que têm a
+    coluna competencia — sem ele o Oracle recusa a referência ambígua.
     """
     if competencia:
         return expressao
-    return f"({expressao}) / NULLIF(COUNT(DISTINCT competencia), 0)"
+    p = f"{alias}." if alias else ""
+    return f"({expressao}) / NULLIF(COUNT(DISTINCT {p}competencia), 0)"
 
 
 # ---------------------------------------------------------------------
@@ -277,6 +281,54 @@ def internacoes_por_uf(competencia: str | None, regiao=None, uf=None) -> pd.Data
     sql, params = _competencia(sql, {}, competencia)
     sql, params = _filtrar(sql, params, regiao, uf)
     return query(sql + " GROUP BY uf ORDER BY internacoes DESC", params)
+
+
+@st.cache_data(ttl=3600)
+def pressao_por_municipio(competencia: str | None, uf: str) -> pd.DataFrame:
+    """
+    Uma linha por município da UF, com o ICPA e o que alimenta a dica do
+    mapa municipal.
+
+    Sai do FATO, e não do índice. Município sem leito SUS ou sem produção
+    hospitalar fica fora do ICPA por construção (ver 03_gold.sql), e é
+    justamente ele que o mapa precisa desenhar: o LEFT JOIN preserva todos
+    os municípios do estado e deixa o icpa nulo onde o índice não se
+    aplica. Um INNER JOIN abriria buracos no contorno bem onde mora o
+    achado do projeto.
+
+    O código do IBGE vem da Silver porque a Gold guarda só o do DATASUS,
+    de seis dígitos, e a malha territorial é chaveada pelos sete.
+
+    Com competencia=None o ICPA de cada município vira a média dos meses
+    em que ele entrou no índice — mesma decisão de ranking_sobrecarga, e
+    pelo mesmo motivo: o índice é normalizado dentro da competência.
+    """
+    sql = f"""
+        SELECT f.cod_municipio,
+               MAX(m.cod_municipio_ibge)                        AS cod_ibge,
+               MAX(f.municipio)                                 AS municipio,
+               ROUND(AVG(f.populacao))                          AS populacao,
+               {_por_mes("SUM(f.internacoes)", competencia, "f")}
+                                                                AS internacoes,
+               {_por_mes("SUM(f.leitos_sus)", competencia, "f")}
+                                                                AS leitos_sus,
+               ROUND(SUM(f.dias_permanencia)
+                     / NULLIF(SUM(f.internacoes), 0), 1)        AS permanencia_media,
+               ROUND(SUM(f.internacoes)
+                     / NULLIF(SUM(f.leitos_sus), 0), 2)         AS internacoes_por_leito,
+               ROUND(AVG(i.icpa), 1)                            AS icpa
+          FROM gold_fato_municipio f
+          JOIN silver_municipio m
+            ON m.cod_municipio = f.cod_municipio
+          LEFT JOIN gold_icpa i
+            ON i.cod_municipio = f.cod_municipio
+           AND i.competencia = f.competencia
+         WHERE f.uf = :uf
+    """
+    sql, params = _competencia(sql, {"uf": uf}, competencia, alias="f")
+    return query(
+        sql + " GROUP BY f.cod_municipio ORDER BY icpa DESC NULLS LAST", params
+    )
 
 
 @st.cache_data(ttl=3600)
