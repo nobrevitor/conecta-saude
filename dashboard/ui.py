@@ -33,6 +33,11 @@ CORES_FAIXA = {
 
 PORTES = ["Todos", "Até 20 mil", "20 a 100 mil", "100 a 500 mil", "Acima de 500 mil"]
 
+# Opção "todas as competências" do filtro. Quando escolhida, as consultas
+# passam a devolver média mensal em vez do valor de um mês — a soma dos
+# doze responderia outra pergunta, e leito nem soma entre meses.
+TODAS = "__todas__"
+
 
 # ---------------------------------------------------------------------
 # Formatação
@@ -63,6 +68,8 @@ def reais(valor) -> str:
 
 
 def competencia_legivel(competencia: str) -> str:
+    if competencia == TODAS:
+        return "Todas · média mensal"
     return f"{competencia[4:]}/{competencia[:4]}" if competencia else "—"
 
 
@@ -77,6 +84,17 @@ class Filtros:
     regiao: str | None
     uf: str | None
     porte: str | None
+
+    @property
+    def competencia_sql(self) -> str | None:
+        """None quando o recorte é o ano inteiro. Ver db._por_mes."""
+        return None if self.competencia in (None, TODAS) else self.competencia
+
+    @property
+    def rotulo_periodo(self) -> str:
+        if self.competencia_sql:
+            return competencia_legivel(self.competencia_sql)
+        return "2024 · média mensal"
 
     @property
     def regiao_sql(self) -> str | None:
@@ -141,11 +159,14 @@ def painel_filtros(mostrar_porte: bool = True) -> Filtros:
     with st.sidebar:
         st.markdown('<div class="cs-slicer">Filtros</div>', unsafe_allow_html=True)
 
+        opcoes = ([TODAS] + competencias) if competencias else ["—"]
         competencia = st.selectbox(
-            "Competência", competencias or ["—"],
-            index=max(len(competencias) - 1, 0),
+            "Competência", opcoes,
+            index=len(opcoes) - 1,          # abre no mês mais recente
             format_func=competencia_legivel,
             key="f_competencia",
+            help="Todas as competências mostra a média mensal de 2024, "
+                 "não a soma dos doze meses.",
         )
         regiao = st.selectbox("Região", regioes, key="f_regiao")
         ufs = ["Todos"] + listar_ou_vazio(
@@ -185,8 +206,7 @@ def cabecalho(titulo: str, subtitulo: str, filtros: Filtros | None = None) -> No
     with esquerda:
         fichas = ""
         if filtros is not None:
-            ativos = [competencia_legivel(filtros.competencia),
-                      filtros.rotulo_territorio]
+            ativos = [filtros.rotulo_periodo, filtros.rotulo_territorio]
             if filtros.porte_sql:
                 ativos.append(filtros.porte_sql)
             fichas = "".join(f'<span class="cs-ficha">{a}</span>' for a in ativos)
@@ -255,7 +275,7 @@ def rodape(notas_metodologicas=()) -> None:
     st.markdown(
         f'<div class="cs-rodape">'
         f"Conecta Saúde · Challenge 2026 Oracle + FIAP · DATASUS "
-        f"(SIH/SUS, CNES, SIGTAP) e IBGE · 202401 a 202412"
+        f"(SIH/SUS, CNES, SIGTAP) e IBGE · 01/2024 a 12/2024"
         f'<span class="cs-estado">Banco: {estado}</span></div>',
         unsafe_allow_html=True,
     )
@@ -293,6 +313,7 @@ COR_APOIO = PALETA[1]
 COR_TINTA = "#1F2933"
 COR_TINTA_SUAVE = "#5A6B75"
 COR_GRADE = "#E3EAED"
+COR_CONTEXTO = "#9CC5D1"   # tom claro da rampa, para a série de apoio
 COR_SUPERFICIE = "#FFFFFF"
 
 FAIXAS_ORDEM = ["Baixa", "Moderada", "Alta", "Crítica"]
@@ -376,40 +397,83 @@ def barras_horizontais(dados: pd.DataFrame, categoria: str, valor: str,
     return _acabamento((barras + texto).properties(height=alt.Step(passo)))
 
 
-def barras_pareadas(dados: pd.DataFrame, categoria: str, medidas, *,
-                    passo: int = 24, titulo_categoria: str | None = None):
+def barras_sobrepostas(dados: pd.DataFrame, categoria: str, medidas, *,
+                       passo: int = 38, titulo_valor: str = "",
+                       titulo_categoria: str | None = None, dicas_extra=()):
     """
-    Duas medidas de escalas diferentes, lado a lado sobre as mesmas
-    categorias. `medidas` é uma lista de (campo, título, coluna_rótulo).
+    Duas medidas sobrepostas na mesma barra e no mesmo eixo.
 
-    Leitos estão na casa dos milhares e internações na dos milhões: num
-    eixo comum a primeira série vira um traço. A saída não é um segundo
-    eixo y — dois eixos se alinham num ponto arbitrário e sugerem uma
-    correlação que o dado não tem —, e sim um painel por medida.
+    `medidas` é uma lista de dois (campo, título, coluna_rótulo). A
+    primeira é a medida de referência e vai à frente, em barra fina e
+    escura; a segunda é o contexto e vai atrás, em barra larga e clara.
+
+    A sobreposição só funciona porque as duas grandezas são comparáveis:
+    por região os leitos ficam entre 27% e 35% das internações, então a
+    barra da frente ocupa cerca de um terço da de trás e as duas se leem
+    juntas. Fossem ordens de grandeza distintas, a série menor viraria um
+    traço colado no eixo — e a saída seria um painel por medida, nunca um
+    segundo eixo y, que alinharia as duas séries num ponto arbitrário.
+
+    Um eixo só, uma escala só: a comparação de comprimento é direta e o
+    leitor não precisa conferir dois conjuntos de marcações.
     """
-    ordem = alt.EncodingSortField(field=medidas[0][0], order="descending")
-    dicas = [alt.Tooltip(f"{categoria}:N", title="")] + [
-        alt.Tooltip(f"{coluna}:N", title=titulo) for _, titulo, coluna in medidas
-    ]
-    paineis = []
+    (campo_frente, titulo_frente, rotulo_frente) = medidas[0]
+    (campo_fundo, titulo_fundo, rotulo_fundo) = medidas[1]
 
-    for indice, (campo, titulo, rotulo) in enumerate(medidas):
-        base = alt.Chart(dados).encode(
-            y=alt.Y(f"{categoria}:N", sort=ordem,
-                    axis=_eixo_categoria(titulo_categoria) if indice == 0 else None),
-            x=alt.X(f"{campo}:Q", axis=_eixo_valor(), scale=_folga(dados, campo, 1.3)),
-            tooltip=dicas,
-        )
-        cor = COR_PRINCIPAL if indice == 0 else COR_APOIO
-        barras = base.mark_bar(cornerRadiusEnd=4, color=cor)
-        texto = base.mark_text(
-            align="left", baseline="middle", dx=6, fontSize=11, color=COR_TINTA_SUAVE,
-        ).encode(text=f"{rotulo}:N")
-        paineis.append(
-            (barras + texto).properties(height=alt.Step(passo), title=titulo)
-        )
+    # Formato longo com um registro por medida, para o eixo de valor e a
+    # legenda saírem de um campo só — é o que garante a escala partilhada.
+    colunas_carregadas = [rotulo_frente, rotulo_fundo, *(c for c, _ in dicas_extra)]
+    partes = []
+    for campo, titulo, _ in (medidas[0], medidas[1]):
+        parte = dados[[categoria, *colunas_carregadas]].copy()
+        parte["medida"] = titulo
+        parte["valor"] = pd.to_numeric(dados[campo], errors="coerce")
+        partes.append(parte)
+    longo = pd.concat(partes, ignore_index=True)
 
-    return _acabamento(alt.hconcat(*paineis, spacing=26))
+    ordem = (
+        dados.sort_values(campo_fundo, ascending=False)[categoria]
+        .astype(str).tolist()
+    )
+    escala = alt.Scale(domain=[titulo_fundo, titulo_frente],
+                       range=[COR_CONTEXTO, COR_PRINCIPAL])
+    dicas = [
+        alt.Tooltip(f"{categoria}:N", title=""),
+        alt.Tooltip(f"{rotulo_fundo}:N", title=titulo_fundo),
+        alt.Tooltip(f"{rotulo_frente}:N", title=titulo_frente),
+    ] + [alt.Tooltip(f"{coluna}:N", title=titulo) for coluna, titulo in dicas_extra]
+
+    base = alt.Chart(longo).encode(
+        y=alt.Y(f"{categoria}:N", sort=ordem,
+                axis=_eixo_categoria(titulo_categoria)),
+        x=alt.X("valor:Q", axis=_eixo_valor(titulo_valor),
+                scale=_folga(longo, "valor", 1.16)),
+        color=alt.Color("medida:N", scale=escala, sort=[titulo_fundo, titulo_frente],
+                        legend=alt.Legend(title=None, orient="top")),
+        tooltip=dicas,
+    )
+
+    fundo = (
+        base.transform_filter(alt.datum.medida == titulo_fundo)
+        .mark_bar(size=round(passo * 0.62), cornerRadiusEnd=4)
+    )
+    frente = (
+        base.transform_filter(alt.datum.medida == titulo_frente)
+        .mark_bar(size=round(passo * 0.26), cornerRadiusEnd=3)
+    )
+    # Só a barra de trás recebe rótulo do lado de fora. O da frente ficaria
+    # por cima da própria barra de contexto, e número sobre barra colorida
+    # é justamente o que a dica de contexto já resolve.
+    rotulo = (
+        base.transform_filter(alt.datum.medida == titulo_fundo)
+        .mark_text(align="left", baseline="middle", dx=6, fontSize=11,
+                   color=COR_TINTA_SUAVE)
+        .encode(text=f"{rotulo_fundo}:N", color=alt.value(COR_TINTA_SUAVE))
+    )
+
+    return _acabamento(
+        (fundo + frente + rotulo).properties(height=alt.Step(passo))
+    )
 
 
 def series_temporais(dados: pd.DataFrame, x: str, series, *, altura: int = 170):
@@ -417,9 +481,10 @@ def series_temporais(dados: pd.DataFrame, x: str, series, *, altura: int = 170):
     Séries no tempo empilhadas, compartilhando o eixo horizontal.
     `series` é uma lista de (campo, título, coluna_rótulo).
 
-    Mesmo motivo de barras_pareadas: grandezas diferentes ganham painéis
-    separados em vez de um segundo eixo y. Só o último ponto recebe
-    rótulo — número em cada marcador vira ruído.
+    Grandezas de ordens diferentes ganham painéis separados em vez de
+    um segundo eixo y, que alinharia as curvas num ponto arbitrário.
+    Só o último ponto recebe rótulo — número em cada marcador vira
+    ruído.
     """
     ultimo = dados[x].iloc[-1]
     # Nomeado de propósito: os painéis compartilham um seletor só, para que
@@ -765,15 +830,40 @@ TITULOS_COLUNA = {
 }
 
 
+# Siglas que devem sair em caixa alta mesmo quando o nome da coluna não
+# está no mapa acima. O Select AI batiza as colunas do resultado como bem
+# entende — "Indice_ICPA", "TOTAL_INTERNACOES" — então o rótulo precisa
+# funcionar para nomes que nunca existiram no esquema.
+SIGLAS = {"icpa", "uf", "cnes", "sus", "uti", "sih", "ibge", "aih", "cid"}
+
+
 def titulo_coluna(nome: str) -> str:
-    """Rótulo de exibição para um nome de coluna do banco."""
-    return TITULOS_COLUNA.get(nome.lower(), nome.replace("_", " ").capitalize())
+    """Rótulo de exibição para um nome de coluna, do banco ou do modelo."""
+    conhecido = TITULOS_COLUNA.get(nome.lower())
+    if conhecido:
+        return conhecido
+    palavras = [
+        p.upper() if p.lower() in SIGLAS else p.lower()
+        for p in nome.replace("_", " ").split()
+    ]
+    if not palavras:
+        return nome
+    if palavras[0].lower() not in SIGLAS:
+        palavras[0] = palavras[0].capitalize()
+    return " ".join(palavras)
 
 
 def rotulo_medida(nome: str) -> str:
-    """Título em caixa de frase, preservando siglas como ICPA."""
-    titulo = titulo_coluna(nome)
-    return titulo if titulo.isupper() else titulo.lower()
+    """
+    Título em caixa de frase para usar no meio de uma frase.
+
+    Só as palavras comuns descem para minúscula: baixar a sigla junto
+    produziria "leitos sus" e "indice icpa" no meio do texto.
+    """
+    return " ".join(
+        palavra if palavra.lower() in SIGLAS else palavra.lower()
+        for palavra in titulo_coluna(nome).split()
+    )
 
 
 # Medidas que não somam: índices, taxas, médias e razões. Somar o ICPA de
@@ -902,3 +992,68 @@ def grafico_automatico(dados: pd.DataFrame):
         )
 
     return None, "O resultado é só de medidas, sem uma dimensão para comparar."
+
+
+def leitura_do_resultado(dados: pd.DataFrame) -> list[str]:
+    """
+    Frases derivadas do próprio resultado devolvido pela consulta.
+
+    São contas sobre as linhas em tela — quem lidera, quanto o topo
+    concentra, qual a amplitude. Nada aqui vem de modelo: a narrativa do
+    Select AI tem espaço próprio na página, e misturar as duas tiraria do
+    leitor a chance de saber o que é dado e o que é redação.
+
+    Mora aqui, e não em ai.py, porque depende do mesmo par que decide a
+    forma do gráfico — medida_principal e titulo_coluna. A leitura e o
+    desenho precisam falar da mesma medida.
+    """
+    if dados is None or dados.empty or len(dados) < 2:
+        return []
+
+    tempo = next((c for c in dados.columns if c.lower() in COLUNAS_TEMPO), None)
+    numericas = [c for c in dados.columns if c != tempo and e_numerica(dados[c])]
+    categoricas = [c for c in dados.columns
+                   if c not in numericas and c != tempo]
+    if not numericas:
+        return []
+
+    valor = medida_principal(dados, numericas)
+    medida = pd.to_numeric(dados[valor], errors="coerce").dropna()
+    if medida.empty:
+        return []
+
+    nome = rotulo_medida(valor)
+    casas = 0 if float(medida.abs().max()) >= 100 else 2
+    notas: list[str] = []
+
+    if categoricas:
+        notas.append(
+            f"Maior **{nome}**: {dados.loc[medida.idxmax(), categoricas[0]]}, "
+            f"com {num(medida.max(), casas)}."
+        )
+
+    # Concentração só vale para medida que soma. Para índice, taxa ou
+    # média, a leitura equivalente é quantas linhas passam da mediana.
+    if e_aditiva(valor):
+        total = float(medida.sum())
+        if total > 0 and len(medida) >= 4:
+            topo = float(medida.nlargest(3).sum())
+            notas.append(
+                f"As três primeiras linhas concentram "
+                f"**{pct(topo / total * 100, 0)}** do total de {nome}."
+            )
+    elif len(medida) >= 4:
+        acima = int((medida > medida.median()).sum())
+        notas.append(
+            f"**{num(acima)}** das {num(len(medida))} linhas ficam acima da "
+            f"mediana de {nome} — medida de índice não se soma, então a "
+            "leitura aqui é de dispersão, não de concentração."
+        )
+
+    if len(medida) >= 3:
+        notas.append(
+            f"Amplitude: de {num(medida.min(), casas)} a "
+            f"{num(medida.max(), casas)}, mediana {num(medida.median(), casas)}."
+        )
+
+    return notas
