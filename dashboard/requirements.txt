@@ -1,4 +1,4 @@
-# Extração e tratamento dos dados públicos do DATASUS
+altair
 pandas
 pyarrow
 datasus-dbc
@@ -6,3 +6,5 @@ dbfread
 ipykernel
 jupyterlab
 oracledb
+streamlit
+pydeck
