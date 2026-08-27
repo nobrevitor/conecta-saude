@@ -82,7 +82,9 @@ with mapa_col:
         "Ocupação por UF", "Demanda contra os leitos de cada estado",
         chave="mapa_uf", altura=ui.ALTURA_CARTAO,
     )
-    dados_uf = db.internacoes_por_uf(filtros.competencia_sql, filtros.regiao_sql)
+    dados_uf = db.internacoes_por_uf(
+        filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql
+    )
     if dados_uf.empty:
         bloco.info("Sem dados.")
     else:
@@ -99,6 +101,7 @@ with mapa_col:
              ("rot_internacoes", "Internações"),
              ("rot_leitos", "Leitos SUS")],
             titulo_legenda="Ocupação estimada dos leitos", altura=altura_mapa,
+            fora_do_recorte=filtros.recorte_territorial,
         )
         with bloco:
             st.pydeck_chart(deck, width="stretch", height=altura_mapa)
@@ -227,6 +230,9 @@ ui.rodape([
     "O **mapa** colore por ocupação, não por volume de internações — volume "
     "apenas repintaria o mapa da população. UF sem produção registrada sai "
     "em cinza, e não na cor de folga.",
+    "O **mapa e o ranking seguem o recorte**: com região ou UF escolhida, as "
+    "demais unidades saem apagadas como fora do recorte — o que é diferente "
+    "de não ter produção registrada.",
     "**% do top 10** é calculado sobre as dez UFs listadas, não sobre o "
     "total do recorte.",
     "Contorno territorial pela malha de unidades federativas do IBGE.",

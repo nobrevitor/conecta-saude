@@ -231,11 +231,15 @@ def internacoes_por_regiao(competencia: str | None) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600)
-def internacoes_por_uf(competencia: str | None, regiao=None) -> pd.DataFrame:
+def internacoes_por_uf(competencia: str | None, regiao=None, uf=None) -> pd.DataFrame:
     """
     Agregado por UF. Com competencia=None cada volume vira média mensal e
     as razões são RECALCULADAS a partir dos componentes somados — nunca
     pela média das razões mensais, que ignoraria o peso de cada mês.
+
+    Aceita os dois níveis do recorte territorial: com `uf` o resultado sai
+    com uma linha só, e quem desenha o mapa pinta as demais como fora do
+    recorte — do mesmo jeito que já acontecia com `regiao`.
 
     A permanência média é o caso que exige atenção: a Gold por UF guarda
     a média, não o total de dias. O total é reconstruído multiplicando-a
@@ -271,7 +275,7 @@ def internacoes_por_uf(competencia: str | None, regiao=None) -> pd.DataFrame:
            -- geometria e no ranking como se fosse um estado a mais.
     """
     sql, params = _competencia(sql, {}, competencia)
-    sql, params = _filtrar(sql, params, regiao)
+    sql, params = _filtrar(sql, params, regiao, uf)
     return query(sql + " GROUP BY uf ORDER BY internacoes DESC", params)
 
 

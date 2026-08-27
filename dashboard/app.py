@@ -12,10 +12,6 @@ from pathlib import Path
 
 import streamlit as st
 
-# Caminhos resolvidos a partir do próprio arquivo, e absolutos: o painel
-# roda igual tanto com `streamlit run app.py` quanto a partir da raiz do
-# repositório. O resolve() importa porque em execução programática o
-# __file__ chega relativo, e aí o parent sozinho não sai do diretório atual.
 DOCS = Path(__file__).resolve().parent / "docs"
 LOGO_CLARO = DOCS / "conecta_saude_logo.svg"      # lockup, sidebar aberto
 LOGO_ICONE = DOCS / "conecta-saude-icone.svg"     # símbolo, sidebar recolhido
@@ -29,12 +25,7 @@ st.set_page_config(
 )
 
 # Estilo compartilhado pelas três páginas.
-#
-# O arranjo é o de um painel de BI: tela larga, respiro curto, cartões de
-# borda fina e tipografia menor que a do Streamlit padrão — que é feita
-# para documento, não para grade. As medidas estão aqui, e não espalhadas
-# pelas views, porque o alinhamento das linhas depende de todas as
-# páginas usarem os mesmos valores.
+
 st.markdown(
     """
     <style>

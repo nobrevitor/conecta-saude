@@ -109,6 +109,11 @@ class Filtros:
         return None if self.porte in (None, "Todos") else self.porte
 
     @property
+    def recorte_territorial(self) -> bool:
+        """True quando o recorte cobre parte do país, e não o Brasil todo."""
+        return bool(self.regiao_sql or self.uf_sql)
+
+    @property
     def rotulo_territorio(self) -> str:
         if self.uf_sql:
             return self.uf_sql
@@ -719,6 +724,12 @@ FAIXAS_OCUPACAO = (
 
 SEM_DADO = ("Sem produção registrada", "—", "", "#E2E8EB")
 
+# UF que o filtro de região ou de UF deixou de fora. Cinza como a de cima,
+# mas é outra afirmação: ali não há dado, aqui há dado e ele não foi pedido.
+# Chamar as duas de "sem produção" faria o mapa mentir a cada filtro — com
+# uma UF escolhida, seriam 26 estados acusados de não ter produção.
+FORA_DO_RECORTE = ("Fora do recorte", "·", "", "#F1F4F5")
+
 
 def faixa_ocupacao(valor) -> tuple[str, str, str, str]:
     """Devolve (rótulo, glifo, texto da faixa, cor) para uma ocupação."""
@@ -735,7 +746,8 @@ def _rgba(cor_hex: str, alfa: int = 235) -> list[int]:
     return [int(cor_hex[i:i + 2], 16) for i in (0, 2, 4)] + [alfa]
 
 
-def legenda_faixas(titulo: str, incluir_sem_dado: bool = False) -> str:
+def legenda_faixas(titulo: str, incluir_sem_dado: bool = False,
+                   incluir_fora: bool = False) -> str:
     """
     Legenda discreta das faixas.
 
@@ -749,6 +761,9 @@ def legenda_faixas(titulo: str, incluir_sem_dado: bool = False) -> str:
     ]
     if incluir_sem_dado:
         rotulo, glifo, texto, cor = SEM_DADO
+        itens.append((glifo, rotulo, texto, cor))
+    if incluir_fora:
+        rotulo, glifo, texto, cor = FORA_DO_RECORTE
         itens.append((glifo, rotulo, texto, cor))
 
     def bloco(glifo: str, rotulo: str, texto: str, cor: str) -> str:
@@ -772,7 +787,8 @@ def legenda_faixas(titulo: str, incluir_sem_dado: bool = False) -> str:
 
 
 def mapa_uf(dados: pd.DataFrame, valor: str, campos, *,
-            titulo_legenda: str = "", altura: int = 340):
+            titulo_legenda: str = "", altura: int = 340,
+            fora_do_recorte: bool = False):
     """
     Coroplético das UFs por faixa de ocupação. Devolve (deck, legenda).
 
@@ -784,6 +800,11 @@ def mapa_uf(dados: pd.DataFrame, valor: str, campos, *,
 
     UF sem produção registrada sai em cinza, e não na cor de folga: leito
     vazio por falta de dado não é leito vazio por sobra de capacidade.
+
+    `fora_do_recorte` diz que `dados` já vem filtrado por região ou por UF
+    — as UFs ausentes ficam apagadas e sem número, marcadas como fora do
+    recorte em vez de sem produção. O mapa passa a responder ao filtro
+    territorial inteiro, e não só à região.
 
     `campos` é uma lista de (coluna, título) para a dica de contexto. As
     chaves entram planas em properties porque o interpolador do tooltip
@@ -797,14 +818,22 @@ def mapa_uf(dados: pd.DataFrame, valor: str, campos, *,
         for _, linha in dados.assign(**{valor: medida}).iterrows()
     }
 
-    feicoes, houve_sem_dado = [], False
+    feicoes, houve_sem_dado, houve_fora = [], False, False
     for feicao in malha["features"]:
         sigla = feicao["properties"]["uf"]
         linha = por_uf.get(sigla)
         bruto = None if linha is None else linha[valor]
-        rotulo, glifo, _, cor = faixa_ocupacao(bruto)
-        if rotulo == SEM_DADO[0]:
-            houve_sem_dado = True
+        # Ausente do resultado com recorte ativo é UF que o filtro deixou
+        # de fora; sem recorte, é ausência de dado mesmo. UF dentro do
+        # recorte e com ocupação zerada continua caindo em SEM_DADO pelo
+        # próprio valor, que é a leitura certa para ela.
+        if linha is None and fora_do_recorte:
+            rotulo, glifo, _, cor = FORA_DO_RECORTE
+            houve_fora = True
+        else:
+            rotulo, glifo, _, cor = faixa_ocupacao(bruto)
+            if rotulo == SEM_DADO[0]:
+                houve_sem_dado = True
 
         propriedades = {
             "uf": sigla,
@@ -853,7 +882,8 @@ def mapa_uf(dados: pd.DataFrame, valor: str, campos, *,
         height=altura,
     )
     return deck, legenda_faixas(titulo_legenda or "Ocupação estimada",
-                                incluir_sem_dado=houve_sem_dado)
+                                incluir_sem_dado=houve_sem_dado,
+                                incluir_fora=houve_fora)
 
 
 # ---------------------------------------------------------------------
