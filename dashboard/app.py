@@ -13,7 +13,7 @@ from pathlib import Path
 import streamlit as st
 
 DOCS = Path(__file__).resolve().parent / "docs"
-LOGO_CLARO = DOCS / "conecta_saude_logo.svg"      # lockup, sidebar aberto
+LOGO_CLARO = DOCS / "logo_conecta_saude.png"      # lockup, sidebar aberto
 LOGO_ICONE = DOCS / "conecta-saude-icone.svg"     # símbolo, sidebar recolhido
 LOGO_ESCURO = DOCS / "conecta_saude_icone_sem_texto_para_fundo_escuro_transparente.png"
 
