@@ -419,6 +419,29 @@ def cabecalho(titulo: str, subtitulo: str, filtros: Filtros | None = None) -> No
 _DELTA_VAZIO = "​"
 
 
+def variacao(atual, anterior, campo: str, casas: int = 1) -> str | None:
+    """
+    Variação percentual de um indicador contra a competência anterior.
+
+    Devolve None — e o cartão sai sem variação — quando não existe período
+    anterior (é o caso do recorte de ano inteiro) ou quando um dos dois
+    lados é zero ou ausente. Zero no denominador não é queda de 100%: é
+    falta de base de comparação, e inventar um número ali seria pior do
+    que não mostrar nenhum.
+
+    As duas páginas de painel usam esta mesma conta, para a mesma seta
+    significar a mesma coisa nas duas.
+    """
+    if atual is None or anterior is None:
+        return None
+    if getattr(atual, "empty", False) or getattr(anterior, "empty", False):
+        return None
+    antes, agora = anterior.get(campo), atual.get(campo)
+    if not antes or not agora:
+        return None
+    return f"{(agora - antes) / antes * 100:+.{casas}f}%"
+
+
 def fita_indicadores(itens) -> None:
     """
     Fita de KPIs no topo.
@@ -595,7 +618,19 @@ def barras_horizontais(dados: pd.DataFrame, categoria: str, valor: str,
     calculado por passo_barras, poucas categorias dariam barras enormes.
     Fixando a espessura, o passo sobrando vira espaço entre as barras.
     """
-    ordem = alt.EncodingSortField(field=valor, order="descending") if ordenar else None
+    # A ordem vai como LISTA de categorias, já ordenada em pandas, e não
+    # como "ordene por este campo". O gráfico é em camadas — barra mais
+    # rótulo — e o Vega-Lite funde o domínio das duas antes de desenhar;
+    # a ordenação por campo não sobrevive a essa fusão de forma
+    # confiável, ainda mais com encoding de cor no meio, que liga o
+    # empilhamento. Com a lista, a ordem é dado, não inferência: o
+    # primeiro item fica no topo. É o mesmo caminho de barras_sobrepostas.
+    ordem = None
+    if ordenar:
+        ordem = (
+            dados.sort_values(valor, ascending=False)[categoria]
+            .astype(str).tolist()
+        )
 
     base = alt.Chart(dados).encode(
         y=alt.Y(f"{categoria}:N", sort=ordem, axis=_eixo_categoria(titulo_categoria)),
@@ -630,6 +665,8 @@ def barras_sobrepostas(dados: pd.DataFrame, categoria: str, medidas, *,
     `medidas` é uma lista de dois (campo, título, coluna_rótulo). A
     primeira é a medida de referência e vai à frente, em barra fina e
     escura; a segunda é o contexto e vai atrás, em barra larga e clara.
+    As duas ganham rótulo direto: comprimento diz a proporção, o número
+    diz o valor, e nenhuma das duas leituras depende do mouse.
 
     A sobreposição só funciona porque as duas grandezas são comparáveis:
     por região os leitos ficam entre 27% e 35% das internações, então a
@@ -685,18 +722,32 @@ def barras_sobrepostas(dados: pd.DataFrame, categoria: str, medidas, *,
         base.transform_filter(alt.datum.medida == titulo_frente)
         .mark_bar(size=round(passo * 0.26), cornerRadiusEnd=3)
     )
-    # Só a barra de trás recebe rótulo do lado de fora. O da frente ficaria
-    # por cima da própria barra de contexto, e número sobre barra colorida
-    # é justamente o que a dica de contexto já resolve.
-    rotulo = (
+    # As duas barras levam o próprio número. Sem o da frente, a medida de
+    # referência existiria só como comprimento dentro da barra de contexto
+    # — legível apenas na dica, que exige passar o mouse.
+    #
+    # O rótulo de trás fica fora da barra, em tinta suave. O da frente cai
+    # sobre a barra de contexto, que é clara o bastante para sustentar
+    # texto escuro; vai em tinta cheia e um pouco mais forte, para não se
+    # confundir com o fundo colorido. Os dois ficam na mesma linha da
+    # faixa, em posições distintas do eixo, porque é a distância entre
+    # eles que mostra a folga entre capacidade e demanda.
+    rotulo_de_tras = (
         base.transform_filter(alt.datum.medida == titulo_fundo)
         .mark_text(align="left", baseline="middle", dx=6, fontSize=11,
                    color=COR_TINTA_SUAVE)
         .encode(text=f"{rotulo_fundo}:N", color=alt.value(COR_TINTA_SUAVE))
     )
+    rotulo_da_frente = (
+        base.transform_filter(alt.datum.medida == titulo_frente)
+        .mark_text(align="left", baseline="middle", dx=6, fontSize=11,
+                   fontWeight=600, color=COR_TINTA)
+        .encode(text=f"{rotulo_frente}:N", color=alt.value(COR_TINTA))
+    )
 
     return _acabamento(
-        (fundo + frente + rotulo).properties(height=alt.Step(passo))
+        (fundo + frente + rotulo_de_tras + rotulo_da_frente)
+        .properties(height=alt.Step(passo))
     )
 
 

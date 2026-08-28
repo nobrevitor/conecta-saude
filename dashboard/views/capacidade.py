@@ -29,6 +29,13 @@ ui.cabecalho(
 )
 
 atual = db.indicadores_gerais(filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql)
+anterior = db.variacao_anterior(filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql)
+
+
+def delta(campo: str, casas: int = 1) -> str | None:
+    """Variação percentual contra a competência anterior."""
+    return ui.variacao(atual, anterior, campo, casas)
+
 
 if atual.empty:
     ui.bloco_vazio()
@@ -52,14 +59,19 @@ total_classificados = int(faixas["municipios"].sum()) if not faixas.empty else 0
 ui.fita_indicadores([
     {"label": "Capacidade instalada",
      "value": f"{ui.num(atual['leitos_sus'])} leitos",
-     "help": "Leitos do CNES disponíveis ao SUS no recorte."},
+     "delta": delta("leitos_sus"),
+     "help": "Leitos do CNES disponíveis ao SUS no recorte. Variação contra "
+             "a competência anterior."},
     {"label": "Demanda no período",
      "value": f"{ui.num(atual['internacoes'])} internações",
-     "help": "Internações pagas na competência selecionada."},
+     "delta": delta("internacoes"),
+     "help": "Internações pagas na competência selecionada. Variação contra "
+             "a competência anterior."},
     {"label": "Ocupação estimada", "value": ui.pct(atual["ocupacao_estimada"]),
+     "delta": delta("ocupacao_estimada"),
      "help": "Dias de permanência sobre leitos vezes 30. É aproximação: o "
              "SIH registra dias de permanência, não a data exata de ocupação "
-             "do leito."},
+             "do leito. Variação contra a competência anterior."},
     {"label": "Em pressão alta ou crítica", "value": ui.num(criticos),
      "delta": f"{criticos / total_classificados * 100:.0f}% dos classificados"
               if total_classificados else None,
@@ -69,7 +81,9 @@ ui.fita_indicadores([
              "ausência de serviço não é pressão baixa."},
     {"label": "Leitos por 10 mil hab.",
      "value": ui.num(atual["leitos_por_10mil"], 2),
-     "help": "Capacidade instalada relativa à população do recorte."},
+     "delta": delta("leitos_por_10mil", 2),
+     "help": "Capacidade instalada relativa à população do recorte. Variação "
+             "contra a competência anterior."},
 ])
 
 # ---------------------------------------------------------------------
@@ -207,10 +221,14 @@ with col_leitura:
 # Linha 2 · ranking de sobrecarga
 # ---------------------------------------------------------------------
 
+# Único cartão da faixa, e por isso o único que pode crescer: sem vizinho
+# na linha, esticar não desalinha nada. Sem altura fixa o cartão acompanha
+# o conteúdo, e as quinze barras cabem inteiras em vez de o gráfico ganhar
+# rolagem própria dentro de um bloco menor que ele.
 bloco = ui.painel(
     "Ranking de sobrecarga",
     "Municípios ordenados pelo Índice Composto de Pressão Assistencial",
-    chave="ranking", altura=ui.ALTURA_CARTAO_ALTO,
+    chave="ranking",
 )
 
 with bloco:
@@ -227,6 +245,9 @@ with bloco:
             rot_internacoes=lambda d: d["internacoes"].map(ui.num),
             rot_leitos=lambda d: d["leitos_sus"].map(ui.num),
         )
+        # A tabela mantém viewport próprio: trinta linhas rolando dentro
+        # dela é o comportamento esperado de uma tabela, e deixá-la crescer
+        # faria o cartão dobrar de altura ao trocar de aba.
         altura_ranking = ui.altura_util(ui.ALTURA_CARTAO_ALTO) - 40
         aba_grafico, aba_tabela = st.tabs(["Quinze primeiros", "Tabela completa"])
 

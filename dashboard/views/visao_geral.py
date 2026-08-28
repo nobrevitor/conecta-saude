@@ -34,12 +34,7 @@ anterior = db.variacao_anterior(filtros.competencia_sql, filtros.regiao_sql, fil
 
 def delta(campo: str, casas: int = 1) -> str | None:
     """Variação percentual contra a competência anterior."""
-    if anterior.empty or atual.empty:
-        return None
-    antes, agora = anterior.get(campo), atual.get(campo)
-    if not antes or not agora:
-        return None
-    return f"{(agora - antes) / antes * 100:+.{casas}f}%"
+    return ui.variacao(atual, anterior, campo, casas)
 
 
 if atual.empty:
