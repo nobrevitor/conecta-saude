@@ -178,6 +178,21 @@ def passo_barras(altura_cartao: int, categorias: int, minimo: int = 24) -> int:
 # tratado, e existe para o mesmo clique não ser processado duas vezes.
 UF_PENDENTE = "_uf_do_mapa"
 ULTIMO_CLIQUE = "_ultimo_clique_mapa"
+CICLO_MAPA = "_ciclo_do_mapa"
+
+
+def chave_do_mapa() -> str:
+    """
+    Chave do widget do mapa, renovada a cada clique consumido.
+
+    A seleção não vive no script: ela fica guardada no estado do widget,
+    de onde é relida a cada rerun. Reaproveitar a mesma chave depois de
+    consumir um clique faz a seleção velha reaparecer assim que o mapa do
+    país volta à tela, e o painel cai de novo no mesmo estado — o clique
+    seguinte nunca chega a ser dado. Chave nova é widget novo, sem estado
+    herdado, e isso não depende de qual camada guardou o valor.
+    """
+    return f"clique_mapa_uf_{st.session_state.get(CICLO_MAPA, 0)}"
 
 
 def _consumir_clique_do_mapa() -> None:
@@ -193,7 +208,12 @@ def _consumir_clique_do_mapa() -> None:
     seria pior do que ajustar o filtro que o contradiz.
     """
     pendente = st.session_state.pop(UF_PENDENTE, None)
-    if not pendente or pendente not in listar_ou_vazio(db.listar_ufs):
+    if not pendente:
+        return
+    # O ciclo avança mesmo que a UF não sirva: o que não pode é o mapa
+    # voltar com a seleção que já foi lida uma vez.
+    st.session_state[CICLO_MAPA] = st.session_state.get(CICLO_MAPA, 0) + 1
+    if pendente not in listar_ou_vazio(db.listar_ufs):
         return
     regiao = st.session_state.get("f_regiao")
     regiao = None if regiao in (None, "Todos") else regiao
@@ -207,10 +227,19 @@ def uf_do_clique(selecao) -> str | None:
     Sigla da UF no clique do mapa, ou None quando nada está selecionado.
 
     A camada é GeoJson, então o deck.gl devolve a feição inteira e o
-    Streamlit repassa o objeto cru — daí a descida por `properties`. A
-    chave do dicionário é o `id` da camada, definido em ui.mapa_uf.
+    Streamlit repassa o objeto cru — daí a descida por `properties`.
+
+    A chave é o `id` da camada. O deck.gl sobe a picking info até a camada
+    raiz, então o que chega é "ufs", o id definido em ui.mapa_uf. O prefixo
+    também é aceito porque GeoJsonLayer é camada composta: se um dia a
+    informação parar na subcamada, ela chega como "ufs-polygons-fill", e
+    perder o clique por causa de um sufixo seria um jeito bobo de quebrar.
     """
-    objetos = (selecao or {}).get("selection", {}).get("objects", {}).get("ufs", [])
+    objetos = []
+    for camada, valores in (selecao or {}).get("selection", {}).get("objects", {}).items():
+        if camada == "ufs" or str(camada).startswith("ufs-"):
+            objetos = valores
+            break
     if not objetos:
         return None
     primeiro = objetos[0]
@@ -282,6 +311,7 @@ def painel_filtros(mostrar_porte: bool = True) -> Filtros:
             for chave in ("f_regiao", "f_uf", "f_porte",
                           UF_PENDENTE, ULTIMO_CLIQUE):
                 st.session_state.pop(chave, None)
+            st.session_state[CICLO_MAPA] = st.session_state.get(CICLO_MAPA, 0) + 1
             st.rerun()
 
     return Filtros(competencia=competencia, regiao=regiao, uf=uf, porte=porte)

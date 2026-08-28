@@ -149,13 +149,19 @@ with mapa_col:
             else:
                 selecao = st.pydeck_chart(
                     deck, width="stretch", height=altura_mapa,
-                    key="clique_mapa_uf", selection_mode="single-object",
+                    key=ui.chave_do_mapa(), selection_mode="single-object",
                     on_select="rerun",
                 )
             st.markdown(legenda, unsafe_allow_html=True)
-        # Antes das consultas dos outros cartões: o clique recomeça o
-        # script, e o que for lido depois daqui seria trabalho jogado fora.
-        ui.tratar_clique_no_mapa(selecao)
+        # Só quando o mapa clicável esteve na tela: `selecao` é None no
+        # ramo municipal, e tratar esse None apagaria a memória do último
+        # clique sem que ninguém tivesse clicado em nada.
+        #
+        # Fica antes das consultas dos outros cartões porque o clique
+        # recomeça o script — o que for lido daqui para baixo seria
+        # trabalho jogado fora.
+        if selecao is not None:
+            ui.tratar_clique_no_mapa(selecao)
 
 with regiao_col:
     bloco = ui.painel("Internações por região", chave="reg",
