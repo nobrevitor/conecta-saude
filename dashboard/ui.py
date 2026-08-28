@@ -271,6 +271,29 @@ def tratar_clique_no_mapa(selecao) -> None:
     st.rerun()
 
 
+# Chaves dos segmentadores, na ordem em que aparecem na lateral. Some da
+# sessão significa "volta ao padrão", porque é o índice inicial de cada
+# selectbox que manda quando não há valor guardado.
+CHAVES_FILTRO = ("f_competencia", "f_regiao", "f_uf", "f_porte")
+
+
+def limpar_filtros() -> None:
+    """
+    Devolve o painel ao estado de abertura: 2024 inteiro, Brasil, todos os
+    portes.
+
+    O estado do MAPA sai junto, e é isso que faltava. O botão limpava os
+    selectboxes, mas a seleção continuava guardada no widget do mapa e
+    voltava no rerun seguinte, reaplicando a UF antiga — de fora, o filtro
+    de UF simplesmente não limpava.
+    """
+    for chave in CHAVES_FILTRO + (UF_PENDENTE, ULTIMO_CLIQUE, chave_do_mapa()):
+        st.session_state.pop(chave, None)
+    # Depois de descartar a chave atual, o ciclo avança: o mapa volta como
+    # widget novo, sem nada herdado de qualquer lado da linha.
+    st.session_state[CICLO_MAPA] = st.session_state.get(CICLO_MAPA, 0) + 1
+
+
 def painel_filtros(mostrar_porte: bool = True) -> Filtros:
     """
     Segmentadores na barra lateral.
@@ -290,7 +313,7 @@ def painel_filtros(mostrar_porte: bool = True) -> Filtros:
         opcoes = ([TODAS] + competencias) if competencias else ["—"]
         competencia = st.selectbox(
             "Competência", opcoes,
-            index=len(opcoes) - 1,          # abre no mês mais recente
+            index=0,                        # abre em 2024 inteiro, como TODAS
             format_func=competencia_legivel,
             key="f_competencia",
             help="Todas as competências mostra a média mensal de 2024, "
@@ -308,10 +331,7 @@ def painel_filtros(mostrar_porte: bool = True) -> Filtros:
 
         if st.button("Limpar filtros", icon=":material/filter_alt_off:",
                      width="stretch"):
-            for chave in ("f_regiao", "f_uf", "f_porte",
-                          UF_PENDENTE, ULTIMO_CLIQUE):
-                st.session_state.pop(chave, None)
-            st.session_state[CICLO_MAPA] = st.session_state.get(CICLO_MAPA, 0) + 1
+            limpar_filtros()
             st.rerun()
 
     return Filtros(competencia=competencia, regiao=regiao, uf=uf, porte=porte)
