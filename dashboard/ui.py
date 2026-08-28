@@ -255,9 +255,19 @@ def tratar_clique_no_mapa(selecao) -> None:
     selectbox da UF já existe. Guarda-se o pedido e recomeça-se o script;
     na volta, _consumir_clique_do_mapa aplica antes dos widgets.
 
-    Repetir a mesma seleção é ignorado de propósito: sem essa trava, um
-    pendente que não pudesse ser aplicado voltaria pelo estado do widget a
-    cada rerun e o painel entraria em laço.
+    Repetir a mesma seleção é ignorado de propósito, e essa trava é o
+    coração da coisa. A seleção não chega como evento: ela fica guardada
+    do lado do navegador e é reenviada em TODO rerun em que o mapa do país
+    está na tela. Do lado do Python, o eco é idêntico a um clique novo — o
+    que os separa é apenas a lembrança de já ter tratado aquele valor.
+
+    Sem essa memória, voltar ao mapa do país (pelo filtro ou pelo botão de
+    limpar) reaplicava na hora a última UF clicada, e o painel caía de
+    novo nela. Por isso ULTIMO_CLIQUE sobrevive a limpar_filtros.
+
+    O eco só se apaga quando o próprio mapa devolve seleção vazia, que é o
+    que acontece ao clicar fora de qualquer estado ou ao reclicar o estado
+    já selecionado — o deck.gl trata o segundo clique como desmarcar.
     """
     escolhida = uf_do_clique(selecao)
     if not escolhida:
@@ -282,15 +292,17 @@ def limpar_filtros() -> None:
     Devolve o painel ao estado de abertura: 2024 inteiro, Brasil, todos os
     portes.
 
-    O estado do MAPA sai junto, e é isso que faltava. O botão limpava os
-    selectboxes, mas a seleção continuava guardada no widget do mapa e
-    voltava no rerun seguinte, reaplicando a UF antiga — de fora, o filtro
-    de UF simplesmente não limpava.
+    ULTIMO_CLIQUE fica de fora da limpeza, e não por esquecimento. O mapa
+    reenvia a seleção guardada assim que volta à tela, e essa memória é o
+    que impede o eco de ser lido como clique novo. Apagá-la aqui era
+    exatamente o que fazia o filtro de UF "não limpar": os selectboxes
+    voltavam ao padrão e, no mesmo instante, a UF antiga era reaplicada.
     """
-    for chave in CHAVES_FILTRO + (UF_PENDENTE, ULTIMO_CLIQUE, chave_do_mapa()):
+    for chave in CHAVES_FILTRO + (UF_PENDENTE, chave_do_mapa()):
         st.session_state.pop(chave, None)
-    # Depois de descartar a chave atual, o ciclo avança: o mapa volta como
-    # widget novo, sem nada herdado de qualquer lado da linha.
+    # Descartada a chave atual, o ciclo avança: se o navegador remontar o
+    # componente, o mapa volta sem seleção nenhuma e nem eco existe. Onde
+    # ele reaproveitar o componente, quem segura é a memória acima.
     st.session_state[CICLO_MAPA] = st.session_state.get(CICLO_MAPA, 0) + 1
 
 
