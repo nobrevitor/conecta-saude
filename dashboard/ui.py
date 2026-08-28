@@ -179,6 +179,24 @@ def passo_barras(altura_cartao: int, categorias: int, minimo: int = 24) -> int:
 UF_PENDENTE = "_uf_do_mapa"
 ULTIMO_CLIQUE = "_ultimo_clique_mapa"
 CICLO_MAPA = "_ciclo_do_mapa"
+GERACAO_FILTROS = "_geracao_filtros"
+
+
+def chave_filtro(nome: str) -> str:
+    """
+    Chave de um segmentador na geração corrente.
+
+    O valor de um widget não vive só na sessão do Python: o navegador
+    guarda a própria cópia e continua exibindo e reenviando a escolha
+    antiga. Apagar a chave no servidor limpa metade do mundo — a tela não
+    muda, e no primeiro reenvio a escolha volta. É por isso que o botão de
+    limpar parecia não fazer nada até a página ser recarregada.
+
+    Trocar a chave resolve pela raiz: o widget passa a ser outro, sem
+    valor guardado de nenhum dos dois lados, e o índice inicial de cada
+    selectbox volta a mandar.
+    """
+    return f"f_{nome}_{st.session_state.get(GERACAO_FILTROS, 0)}"
 
 
 def chave_do_mapa() -> str:
@@ -215,11 +233,11 @@ def _consumir_clique_do_mapa() -> None:
     st.session_state[CICLO_MAPA] = st.session_state.get(CICLO_MAPA, 0) + 1
     if pendente not in listar_ou_vazio(db.listar_ufs):
         return
-    regiao = st.session_state.get("f_regiao")
+    regiao = st.session_state.get(chave_filtro("regiao"))
     regiao = None if regiao in (None, "Todos") else regiao
     if pendente not in listar_ou_vazio(db.listar_ufs, regiao):
-        st.session_state["f_regiao"] = "Todos"
-    st.session_state["f_uf"] = pendente
+        st.session_state[chave_filtro("regiao")] = "Todos"
+    st.session_state[chave_filtro("uf")] = pendente
 
 
 def uf_do_clique(selecao) -> str | None:
@@ -274,35 +292,37 @@ def tratar_clique_no_mapa(selecao) -> None:
         st.session_state.pop(ULTIMO_CLIQUE, None)
         return
     if escolhida in (st.session_state.get(ULTIMO_CLIQUE),
-                     st.session_state.get("f_uf")):
+                     st.session_state.get(chave_filtro("uf"))):
         return
     st.session_state[ULTIMO_CLIQUE] = escolhida
     st.session_state[UF_PENDENTE] = escolhida
     st.rerun()
 
 
-# Chaves dos segmentadores, na ordem em que aparecem na lateral. Some da
-# sessão significa "volta ao padrão", porque é o índice inicial de cada
-# selectbox que manda quando não há valor guardado.
-CHAVES_FILTRO = ("f_competencia", "f_regiao", "f_uf", "f_porte")
+# Nomes dos segmentadores, na ordem em que aparecem na lateral. A chave
+# real de cada um sai de chave_filtro, que costura a geração.
+NOMES_FILTRO = ("competencia", "regiao", "uf", "porte")
 
 
 def limpar_filtros() -> None:
     """
-    Devolve o painel ao estado de abertura: 2024 inteiro, Brasil, todos os
-    portes.
+    Devolve o painel ao estado de abertura — 2024 inteiro, Brasil, todos
+    os portes — como se a página tivesse acabado de ser aberta.
 
-    ULTIMO_CLIQUE fica de fora da limpeza, e não por esquecimento. O mapa
-    reenvia a seleção guardada assim que volta à tela, e essa memória é o
-    que impede o eco de ser lido como clique novo. Apagá-la aqui era
-    exatamente o que fazia o filtro de UF "não limpar": os selectboxes
-    voltavam ao padrão e, no mesmo instante, a UF antiga era reaplicada.
+    Avança a geração dos filtros e o ciclo do mapa: todo widget da lateral
+    e o próprio mapa renascem com chave nova, sem valor guardado nem no
+    Python nem no navegador. As chaves velhas ainda são descartadas, para
+    a sessão não acumular estado de gerações passadas.
+
+    ULTIMO_CLIQUE fica de fora, e não por esquecimento: o mapa reenvia a
+    seleção guardada quando volta à tela, e é essa memória que impede o
+    eco de ser lido como clique novo.
     """
-    for chave in CHAVES_FILTRO + (UF_PENDENTE, chave_do_mapa()):
-        st.session_state.pop(chave, None)
-    # Descartada a chave atual, o ciclo avança: se o navegador remontar o
-    # componente, o mapa volta sem seleção nenhuma e nem eco existe. Onde
-    # ele reaproveitar o componente, quem segura é a memória acima.
+    for nome in NOMES_FILTRO:
+        st.session_state.pop(chave_filtro(nome), None)
+    st.session_state.pop(chave_do_mapa(), None)
+    st.session_state.pop(UF_PENDENTE, None)
+    st.session_state[GERACAO_FILTROS] = st.session_state.get(GERACAO_FILTROS, 0) + 1
     st.session_state[CICLO_MAPA] = st.session_state.get(CICLO_MAPA, 0) + 1
 
 
@@ -327,19 +347,20 @@ def painel_filtros(mostrar_porte: bool = True) -> Filtros:
             "Competência", opcoes,
             index=0,                        # abre em 2024 inteiro, como TODAS
             format_func=competencia_legivel,
-            key="f_competencia",
+            key=chave_filtro("competencia"),
             help="Todas as competências mostra a média mensal de 2024, "
                  "não a soma dos doze meses.",
         )
-        regiao = st.selectbox("Região", regioes, key="f_regiao")
+        regiao = st.selectbox("Região", regioes, key=chave_filtro("regiao"))
         ufs = ["Todos"] + listar_ou_vazio(
             db.listar_ufs, None if regiao == "Todos" else regiao
         )
-        uf = st.selectbox("UF", ufs, key="f_uf")
+        uf = st.selectbox("UF", ufs, key=chave_filtro("uf"))
 
         porte = "Todos"
         if mostrar_porte:
-            porte = st.selectbox("Porte do município", PORTES, key="f_porte")
+            porte = st.selectbox("Porte do município", PORTES,
+                                 key=chave_filtro("porte"))
 
         if st.button("Limpar filtros", icon=":material/filter_alt_off:",
                      width="stretch"):
