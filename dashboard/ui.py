@@ -412,6 +412,13 @@ def cabecalho(titulo: str, subtitulo: str, filtros: Filtros | None = None) -> No
             st.rerun()
 
 
+# Espaço de largura zero, para reservar a linha da variação sem desenhar
+# nada nela. Não serve espaço comum nem NBSP: o st.metric passa o delta
+# por textwrap.dedent, que a partir do Python 3.13 apaga linha composta
+# só de espaço em branco — e os dois se enquadram nisso, o U+200B não.
+_DELTA_VAZIO = "​"
+
+
 def fita_indicadores(itens) -> None:
     """
     Fita de KPIs no topo.
@@ -421,25 +428,29 @@ def fita_indicadores(itens) -> None:
     em grade um parágrafo de texto entre a fita e a primeira linha de
     cartões empurra tudo para baixo e quebra o alinhamento.
 
-    Cartão sem variação não ganha variação nenhuma. Já reservamos aqui a
-    linha do delta com um caractere invisível, para os cartões terem a
-    mesma altura natural — mas o Streamlit desenha o balão do delta mesmo
-    quando o texto dentro dele é vazio, e o resultado era uma cápsula
-    cinza sem nada escrito. Some com o recorte de ano inteiro, em que
-    nenhum indicador tem competência anterior para comparar.
-
-    O alinhamento fica por conta das duas travas que não desenham nada:
+    Todos os cartões terminam na mesma linha, mesmo quando um cresce por
+    rótulo em duas linhas ou por ter `delta` onde os vizinhos não têm.
+    Duas travas sustentam isso, porque só o CSS já se mostrou frágil:
 
     · `height="stretch"` manda o próprio Streamlit esticar o cartão até a
       altura da coluna, que por sua vez acompanha a mais alta da linha;
 
-    · o contêiner nomeado dá a classe `st-key-fita_indicadores`, gancho do
-      CSS do app.py que estica a coluna inteira até a linha mais alta.
+    · a linha da variação é reservada nos cartões sem `delta`, com um
+      espaço rígido, sem seta e sem cor. Assim os cinco cartões têm a
+      mesma estrutura e a mesma altura natural, com CSS ou sem ele.
 
-    Onde falta o delta sobra espaço no rodapé do cartão, e não um degrau
-    na fita: a caixa continua do mesmo tamanho da vizinha.
+    O contêiner nomeado dá a classe `st-key-fita_indicadores`, gancho do
+    CSS que acompanha essas duas travas no app.py.
     """
     itens = list(itens)
+    if any(item.get("delta") for item in itens):
+        itens = [
+            item if item.get("delta")
+            else {**item, "delta": _DELTA_VAZIO, "delta_color": "off",
+                  "delta_arrow": "off"}
+            for item in itens
+        ]
+
     faixa = st.container(key="fita_indicadores")
     colunas = faixa.columns(len(itens), gap="small")
     for coluna, item in zip(colunas, itens):

@@ -104,19 +104,6 @@ st.markdown(
           font-size: 1.42rem; font-weight: 640; letter-spacing: -0.01em;
       }
       [data-testid="stMetricDelta"] { font-size: 0.71rem; }
-      /* Cartão sem variação reserva a linha dela em branco. Sem isso, um
-         cartão com delta ao lado de outro sem deixaria a fita em degrau
-         caso o esticar da coluna acima falhe. A reserva não desenha nada:
-         o balão do delta só existe quando há texto para ele. Se o :has()
-         não pegar, quem alinha continua sendo o esticar — o pior caso é
-         voltar ao que era antes desta regra, não quebrar. */
-      .st-key-fita_indicadores [data-testid="stMetric"]:not(
-        :has([data-testid="stMetricDelta"])
-      )::after {
-          content: "";
-          display: block;
-          height: 1.3rem;
-      }
       /* O primeiro cartão recebe as fichas encaixadas no topo: canto reto
          do lado esquerdo para a emenda com elas ficar contínua. */
       .st-key-fita_indicadores [data-testid="stColumn"]:first-child
@@ -147,7 +134,10 @@ st.markdown(
       .cs-slicer {
           font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
           letter-spacing: 0.07em; color: #5A6B75;
-          margin: 0.5rem 0 -0.2rem;
+          /* A margem de baixo é somada ao gap de 0.4rem da pilha do
+             sidebar, logo abaixo: o respiro real entre o rótulo e o
+             primeiro segmentador é a soma dos dois. */
+          margin: 0.5rem 0 0.45rem;
       }
       [data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0.4rem; }
 
