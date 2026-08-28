@@ -2,10 +2,19 @@
 <title>Conecta Saúde</title>
 <desc>Logotipo Conecta Saúde: cruz de linha contínua com pontos de dados, nome da marca e assinatura "Inteligência de dados para a gestão em saúde".</desc>
 <defs>
-  <linearGradient id="grad-cruz" x1="0.05" y1="0.95" x2="0.95" y2="0.05">
-    <stop offset="0"    stop-color="#1264A3"/>
-    <stop offset="0.50" stop-color="#00A79D"/>
-    <stop offset="1"    stop-color="#3FD9C6"/>
+  <!-- Eixo medido do original: 82 graus, teal no topo e azul na base.
+       userSpaceOnUse para que os dois caminhos do ícone compartilhem
+       o mesmo gradiente em vez de cada um receber o seu. -->
+  <linearGradient id="grad-cruz" gradientUnits="userSpaceOnUse"
+                  x1="7714" y1="1560" x2="9686" y2="16140">
+    <stop offset="0.00" stop-color="#005BA0"/>
+    <stop offset="0.20" stop-color="#005A9E"/>
+    <stop offset="0.35" stop-color="#005AA0"/>
+    <stop offset="0.45" stop-color="#0068A2"/>
+    <stop offset="0.55" stop-color="#007AA0"/>
+    <stop offset="0.65" stop-color="#00979D"/>
+    <stop offset="0.75" stop-color="#00A39C"/>
+    <stop offset="1.00" stop-color="#00A49C"/>
   </linearGradient>
 </defs>
 <g transform="translate(0.000000,1764.000000) scale(0.100000,-0.100000)">
@@ -156,7 +165,7 @@ c-31 -31 -30 -66 2 -58 20 5 24 2 28 -24 5 -33 -6 -61 -15 -39 -4 10 -6 9 -6
 21 15 30 34 15 34 -5 -1 -24 -15 -43 -31z M12610 9458 c-11 -12 -20 -25 -20
 -30 0 -4 -6 -8 -14 -8 -16 0 -46 -26 -46 -41 0 -5 27 12 60 38 33 25 60 50 60
 55 0 15 -19 8 -40 -14z"/>
-  <path fill="#0D2B45"         d="M20385 14270 c-61 -6 -198 -33 -305 -60 -85 -21 -226 -83 -356 -156
+  <path fill="#002040"         d="M20385 14270 c-61 -6 -198 -33 -305 -60 -85 -21 -226 -83 -356 -156
 -52 -29 -69 -40 -161 -101 -85 -57 -320 -307 -378 -403 -54 -89 -76 -129 -95
 -170 -82 -174 -106 -233 -130 -325 -10 -38 -23 -82 -29 -97 -6 -15 -22 -96
 -37 -180 -14 -84 -30 -178 -36 -208 -6 -32 -8 -182 -5 -360 5 -361 21 -480
@@ -388,7 +397,7 @@ c-53 -50 -78 -61 -123 -53 -72 12 -86 52 -89 250 -2 141 -8 165 -41 165 -39 0
 99 15 64 -10 72 10 72 180 0 78 5 167 11 199 9 48 8 61 -6 82 -17 26 -53 32
 -73 12z M22952 2673 c-12 -26 -8 -431 5 -444 6 -6 23 -9 39 -7 l29 3 5 210 c3
 116 2 220 -2 233 -9 28 -63 31 -76 5z"/>
-  <path fill="#00A79D"         d="M20290 8834 c-14 -2 -64 -9 -112 -15 -448 -56 -815 -294 -969 -629
+  <path fill="#00A199"         d="M20290 8834 c-14 -2 -64 -9 -112 -15 -448 -56 -815 -294 -969 -629
 -11 -25 -29 -61 -39 -81 -12 -21 -24 -75 -30 -130 -6 -52 -15 -119 -20 -150
 -17 -94 22 -389 60 -451 11 -18 20 -40 20 -48 0 -36 133 -223 207 -290 219
 -200 493 -324 993 -449 381 -95 579 -169 705 -264 93 -70 121 -105 166 -206
