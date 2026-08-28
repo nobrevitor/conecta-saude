@@ -96,12 +96,13 @@ with mapa_col:
     if filtros.uf_sql:
         bloco = ui.painel(
             f"Pressão por município · {filtros.uf_sql}",
-            "Índice Composto de Pressão Assistencial de cada município",
+            "Índice Composto de Pressão Assistencial · volte pelo filtro de UF",
             chave="mapa_uf", altura=ui.ALTURA_CARTAO,
         )
     else:
         bloco = ui.painel(
-            "Ocupação por UF", "Demanda contra os leitos de cada estado",
+            "Ocupação por UF",
+            "Demanda contra os leitos · clique num estado para abrir os municípios",
             chave="mapa_uf", altura=ui.ALTURA_CARTAO,
         )
 
@@ -137,9 +138,24 @@ with mapa_col:
                 titulo_legenda="Ocupação estimada dos leitos", altura=altura_mapa,
                 fora_do_recorte=filtros.recorte_territorial,
             )
+        # Só o mapa do país responde ao clique. No mapa municipal não há
+        # nível abaixo para abrir: o filtro não desce do município, e uma
+        # seleção que não leva a lugar nenhum é promessa que a tela não
+        # cumpre. A volta é pelo filtro de UF, como diz o subtítulo.
+        selecao = None
         with bloco:
-            st.pydeck_chart(deck, width="stretch", height=altura_mapa)
+            if filtros.uf_sql:
+                st.pydeck_chart(deck, width="stretch", height=altura_mapa)
+            else:
+                selecao = st.pydeck_chart(
+                    deck, width="stretch", height=altura_mapa,
+                    key="clique_mapa_uf", selection_mode="single-object",
+                    on_select="rerun",
+                )
             st.markdown(legenda, unsafe_allow_html=True)
+        # Antes das consultas dos outros cartões: o clique recomeça o
+        # script, e o que for lido depois daqui seria trabalho jogado fora.
+        ui.tratar_clique_no_mapa(selecao)
 
 with regiao_col:
     bloco = ui.painel("Internações por região", chave="reg",

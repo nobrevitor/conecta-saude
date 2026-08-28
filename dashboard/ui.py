@@ -172,6 +172,76 @@ def passo_barras(altura_cartao: int, categorias: int, minimo: int = 24) -> int:
     return max(minimo, (altura_util(altura_cartao) - _EIXO_VALOR) // categorias)
 
 
+# Estado que liga o clique no mapa ao selectbox da UF. São duas chaves
+# porque são dois papéis: UF_PENDENTE é o recado de um rerun para o outro,
+# consumido assim que chega; ULTIMO_CLIQUE é a memória do que já foi
+# tratado, e existe para o mesmo clique não ser processado duas vezes.
+UF_PENDENTE = "_uf_do_mapa"
+ULTIMO_CLIQUE = "_ultimo_clique_mapa"
+
+
+def _consumir_clique_do_mapa() -> None:
+    """
+    Aplica no filtro a UF que veio de um clique no mapa.
+
+    Roda ANTES de qualquer widget nascer: o Streamlit só aceita escrever
+    no estado de um widget por chave enquanto ele ainda não existe no
+    rerun. Depois de instanciado o selectbox, a escrita vira exceção.
+
+    Se a UF clicada estiver fora da região filtrada, a região sai do
+    caminho. O clique é uma escolha territorial direta, e engoli-lo calado
+    seria pior do que ajustar o filtro que o contradiz.
+    """
+    pendente = st.session_state.pop(UF_PENDENTE, None)
+    if not pendente or pendente not in listar_ou_vazio(db.listar_ufs):
+        return
+    regiao = st.session_state.get("f_regiao")
+    regiao = None if regiao in (None, "Todos") else regiao
+    if pendente not in listar_ou_vazio(db.listar_ufs, regiao):
+        st.session_state["f_regiao"] = "Todos"
+    st.session_state["f_uf"] = pendente
+
+
+def uf_do_clique(selecao) -> str | None:
+    """
+    Sigla da UF no clique do mapa, ou None quando nada está selecionado.
+
+    A camada é GeoJson, então o deck.gl devolve a feição inteira e o
+    Streamlit repassa o objeto cru — daí a descida por `properties`. A
+    chave do dicionário é o `id` da camada, definido em ui.mapa_uf.
+    """
+    objetos = (selecao or {}).get("selection", {}).get("objects", {}).get("ufs", [])
+    if not objetos:
+        return None
+    primeiro = objetos[0]
+    sigla = primeiro.get("properties", primeiro).get("uf")
+    return str(sigla) if sigla else None
+
+
+def tratar_clique_no_mapa(selecao) -> None:
+    """
+    Traduz o clique no mapa em recado para o próximo rerun.
+
+    A escrita no filtro não acontece aqui — quando o mapa é desenhado, o
+    selectbox da UF já existe. Guarda-se o pedido e recomeça-se o script;
+    na volta, _consumir_clique_do_mapa aplica antes dos widgets.
+
+    Repetir a mesma seleção é ignorado de propósito: sem essa trava, um
+    pendente que não pudesse ser aplicado voltaria pelo estado do widget a
+    cada rerun e o painel entraria em laço.
+    """
+    escolhida = uf_do_clique(selecao)
+    if not escolhida:
+        st.session_state.pop(ULTIMO_CLIQUE, None)
+        return
+    if escolhida in (st.session_state.get(ULTIMO_CLIQUE),
+                     st.session_state.get("f_uf")):
+        return
+    st.session_state[ULTIMO_CLIQUE] = escolhida
+    st.session_state[UF_PENDENTE] = escolhida
+    st.rerun()
+
+
 def painel_filtros(mostrar_porte: bool = True) -> Filtros:
     """
     Segmentadores na barra lateral.
@@ -182,6 +252,8 @@ def painel_filtros(mostrar_porte: bool = True) -> Filtros:
     """
     competencias = listar_ou_vazio(db.listar_competencias)
     regioes = ["Todos"] + listar_ou_vazio(db.listar_regioes)
+
+    _consumir_clique_do_mapa()
 
     with st.sidebar:
         st.markdown('<div class="cs-slicer">Filtros</div>', unsafe_allow_html=True)
@@ -207,7 +279,8 @@ def painel_filtros(mostrar_porte: bool = True) -> Filtros:
 
         if st.button("Limpar filtros", icon=":material/filter_alt_off:",
                      width="stretch"):
-            for chave in ("f_regiao", "f_uf", "f_porte"):
+            for chave in ("f_regiao", "f_uf", "f_porte",
+                          UF_PENDENTE, ULTIMO_CLIQUE):
                 st.session_state.pop(chave, None)
             st.rerun()
 
@@ -703,7 +776,11 @@ def carregar_malha_uf() -> dict:
     return {"type": "FeatureCollection", "features": feicoes}
 
 
-@st.cache_data(show_spinner=False)
+# Seis estados no cache: quem navega os 27 guardaria a malha de todos, e
+# GeoJSON decodificado ocupa em objetos Python bem mais do que os bytes do
+# arquivo. Seis cobre o vaivém entre estados vizinhos numa análise; passar
+# disso é reler um arquivo de algumas centenas de KB, que é barato.
+@st.cache_data(show_spinner=False, max_entries=6)
 def carregar_malha_municipios(uf: str) -> dict:
     """
     Contorno dos municípios de uma UF, um arquivo por estado.
