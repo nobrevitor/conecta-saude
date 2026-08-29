@@ -794,8 +794,21 @@ def series_temporais(dados: pd.DataFrame, x: str, series, *, altura: int = 170):
     graficos = []
 
     for indice, (campo, titulo, rotulo) in enumerate(series):
-        eixo_x = (_eixo_categoria() if indice == len(series) - 1
-                  else alt.Axis(title=None, labels=False, grid=False, ticks=False))
+        # Uma linha pontilhada por competência, nos dois painéis. Ela dá
+        # a referência vertical para conferir um ponto contra o outro sem
+        # o peso de uma grade cheia — e, como sobe do eixo compartilhado,
+        # amarra a leitura dos dois gráficos empilhados na mesma data.
+        # O tracejado a distingue da régua sólida, que é do cursor.
+        grade_competencia = {
+            "grid": True, "gridDash": [2, 3],
+            "gridColor": COR_GRADE, "gridWidth": 1,
+        }
+        eixo_x = (
+            alt.Axis(title=None, labelLimit=190, **grade_competencia)
+            if indice == len(series) - 1
+            else alt.Axis(title=None, labels=False, ticks=False,
+                          **grade_competencia)
+        )
         seletor = alt.selection_point(
             name=f"ponto_{campo}", nearest=True, on="pointerover",
             fields=[x], empty=False,
