@@ -174,6 +174,7 @@ def _somente_leitura(sql: str) -> bool:
 # Ponto de entrada
 # ---------------------------------------------------------------------
 
+@st.cache_data(ttl=1800, show_spinner=False)
 def perguntar(pergunta: str, competencia: str) -> Resposta:
     """
     Pergunta em português, resposta com SQL, dados e narrativa.
@@ -181,6 +182,11 @@ def perguntar(pergunta: str, competencia: str) -> Resposta:
     A narrativa só é pedida quando a consulta devolveu linhas. Ela é uma
     segunda ida ao modelo, e narrar um resultado vazio custa a mesma
     espera para dizer que não há nada a dizer.
+
+    O cache existe porque cada chamada aqui são DUAS idas ao modelo, e a
+    mesma pergunta na mesma competência devolve a mesma coisa. Meia hora
+    de TTL cobre a sessão de quem repete uma pergunta pelos botões de
+    exemplo sem congelar o resultado para sempre.
     """
     resposta = Resposta(pergunta=pergunta.strip())
     if not resposta.pergunta:

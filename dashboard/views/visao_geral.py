@@ -60,8 +60,11 @@ ui.fita_indicadores([
              "do leito."},
     {"label": "Municípios sem leito SUS",
      "value": ui.num(atual["municipios_sem_leito"]),
-     "delta": f"{atual['municipios_sem_leito'] / atual['municipios'] * 100:.0f}%"
-              " do recorte",
+     # A guarda não é decorativa: num recorte sem linhas a consulta ainda
+     # devolve UMA linha, com COUNT(DISTINCT) zerado e os SUM nulos. O
+     # `atual.empty` acima não pega esse caso, e a divisão estourava.
+     "delta": (f"{ui.pct(atual['municipios_sem_leito'] / atual['municipios'] * 100, 0)}"
+               " do recorte") if atual["municipios"] else None,
      "delta_color": "inverse",
      "help": "Municípios sem nenhum leito SUS cadastrado no CNES."},
 ])
@@ -191,14 +194,17 @@ with gestao_col:
     if gestao.empty:
         bloco.info("Sem dados.")
     else:
-        total_leitos = gestao["leitos_sus"].sum()
+        total_leitos = float(gestao["leitos_sus"].sum())
+        # A parcela sai antes, e o rótulo é montado por compreensão sobre as
+        # duas colunas: apply(axis=1) instancia uma Series por linha só para
+        # concatenar dois números já formatados.
+        parcela = ((gestao["leitos_sus"] / total_leitos * 100) if total_leitos
+                   else gestao["leitos_sus"] * 0)
         gestao = gestao.assign(
-            pct=lambda d: d["leitos_sus"] / total_leitos * 100 if total_leitos else 0,
-        ).assign(
-            rotulo=lambda d: d.apply(
-                lambda linha: f"{ui.num(linha['leitos_sus'])} · {ui.pct(linha['pct'])}",
-                axis=1),
-            estab=lambda d: d["estabelecimentos"].map(ui.num),
+            pct=parcela,
+            rotulo=[f"{ui.num(leitos)} · {ui.pct(p)}"
+                    for leitos, p in zip(gestao["leitos_sus"], parcela)],
+            estab=gestao["estabelecimentos"].map(ui.num),
         )
         bloco.altair_chart(
             ui.barras_horizontais(

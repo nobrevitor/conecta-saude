@@ -7,6 +7,7 @@ que cada view cuide só do que é específico dela.
 
 from __future__ import annotations
 
+import functools
 import json
 import math
 from dataclasses import dataclass
@@ -545,6 +546,19 @@ def bloco_vazio(mensagem: str = "Sem dados para os filtros selecionados.") -> No
     st.info(mensagem, icon=":material/info:")
 
 
+@st.cache_data(show_spinner=False, max_entries=4)
+def csv_para_download(dados: pd.DataFrame) -> bytes:
+    """
+    Bytes do CSV de um resultado, prontos para o st.download_button.
+
+    O botão exige o conteúdo montado no momento em que a página é
+    desenhada — não há como adiar a geração até o clique. Sem cache, um
+    resultado de milhares de linhas era serializado inteiro a cada rerun,
+    mesmo quando ninguém baixava nada.
+    """
+    return dados.to_csv(index=False).encode("utf-8")
+
+
 # ---------------------------------------------------------------------
 # Gráficos
 # ---------------------------------------------------------------------
@@ -964,14 +978,22 @@ CODIGO_UF = {
 }
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def carregar_malha_uf() -> dict:
     """
     Contorno das UFs com a sigla injetada em properties.
 
     O arquivo está versionado em geo/ (ver geo/FONTE.md) justamente para
-    o mapa não depender de rede durante a apresentação. O cache evita
-    reabrir e reserializar 98 KB a cada rerun do Streamlit.
+    o mapa não depender de rede durante a apresentação.
+
+    CONTRATO: quem chama só LÊ o que volta daqui. É cache_resource, e não
+    cache_data, por dois motivos. O primeiro é custo: são 193 KB, e o
+    cache_data devolve cópia nova a cada chamada — 4,6 ms de pickle por
+    rerun para reproduzir um arquivo que não muda em execução. O segundo é
+    o botão Atualizar, que chama st.cache_data.clear(): sob cache_data ele
+    apagava a malha junto, forçando reler do disco algo que está
+    versionado. Em troca, o dicionário devolvido é compartilhado — mutar
+    o que vem daqui contamina todas as sessões.
     """
     malha = json.loads(MALHA_UF.read_text(encoding="utf-8"))
     feicoes = []
@@ -987,7 +1009,7 @@ def carregar_malha_uf() -> dict:
 # GeoJSON decodificado ocupa em objetos Python bem mais do que os bytes do
 # arquivo. Seis cobre o vaivém entre estados vizinhos numa análise; passar
 # disso é reler um arquivo de algumas centenas de KB, que é barato.
-@st.cache_data(show_spinner=False, max_entries=6)
+@st.cache_resource(show_spinner=False, max_entries=6)
 def carregar_malha_municipios(uf: str) -> dict:
     """
     Contorno dos municípios de uma UF, um arquivo por estado.
@@ -997,6 +1019,12 @@ def carregar_malha_municipios(uf: str) -> dict:
     tem de sobra, e o painel só desenha municípios quando há uma UF
     escolhida — então o recorte por arquivo acompanha o recorte da tela.
     As feições trazem o código do IBGE em properties.codarea.
+
+    CONTRATO: quem chama só LÊ o que volta daqui — mesma razão de
+    carregar_malha_uf, e aqui pesa mais. Sob cache_data, Minas Gerais
+    custava 14 ms de pickle por rerun só para devolver uma cópia de um
+    arquivo que não muda. As feições do mapa guardam referência para estas
+    geometrias em vez de copiá-las, e nada nesse caminho as altera.
     """
     arquivo = MALHA_MUNICIPIOS / f"{uf}.json"
     if not arquivo.exists():
@@ -1034,14 +1062,25 @@ SEM_DADO = ("Sem produção registrada", "—", "", "#E2E8EB")
 FORA_DO_RECORTE = ("Fora do recorte", "·", "", "#F1F4F5")
 
 
+def _faixa(valor, faixas, ausente) -> tuple[str, str, str, str]:
+    """
+    Classifica um valor na primeira faixa cujo teto ele não alcança.
+
+    A última faixa de cada tabela tem teto None, então o laço sempre sai
+    por dentro: não existe caso de cair fora e precisar de um retorno de
+    borda depois dele.
+    """
+    for teto, rotulo, glifo, texto, cor in faixas:
+        if teto is None or valor < teto:
+            return rotulo, glifo, texto, cor
+    return ausente
+
+
 def faixa_ocupacao(valor) -> tuple[str, str, str, str]:
     """Devolve (rótulo, glifo, texto da faixa, cor) para uma ocupação."""
     if valor is None or pd.isna(valor) or valor <= 0:
         return SEM_DADO
-    for teto, rotulo, glifo, texto, cor in FAIXAS_OCUPACAO:
-        if teto is None or valor < teto:
-            return rotulo, glifo, texto, cor
-    return FAIXAS_OCUPACAO[-1][1:]
+    return _faixa(valor, FAIXAS_OCUPACAO, SEM_DADO)
 
 
 # Faixas do ICPA, mesmos cortes do gold_icpa_classificado (03_gold.sql) e
@@ -1070,10 +1109,7 @@ def faixa_icpa(valor) -> tuple[str, str, str, str]:
     """Devolve (rótulo, glifo, texto da faixa, cor) para um ICPA."""
     if valor is None or pd.isna(valor):
         return FORA_DO_INDICE
-    for teto, rotulo, glifo, texto, cor in FAIXAS_ICPA:
-        if teto is None or valor < teto:
-            return rotulo, glifo, texto, cor
-    return FAIXAS_ICPA[-1][1:]
+    return _faixa(valor, FAIXAS_ICPA, FORA_DO_INDICE)
 
 
 def _rgba(cor_hex: str, alfa: int = 235) -> list[int]:
@@ -1110,32 +1146,37 @@ def _legenda(titulo: str, itens) -> str:
     )
 
 
+def _legenda_de_faixas(titulo: str, faixas, extras=()) -> str:
+    """
+    Legenda de uma tabela de faixas, com os cinzas que couberem no fim.
+
+    As tabelas guardam (teto, rótulo, glifo, texto, cor) e a legenda quer
+    (glifo, rótulo, texto, cor); os sentinelas de ausência já vêm nessa
+    segunda ordem. A reordenação mora aqui, e não repetida em cada legenda.
+    """
+    itens = [
+        (glifo, rotulo, texto, cor)
+        for _, rotulo, glifo, texto, cor in faixas
+    ]
+    itens += [
+        (glifo, rotulo, texto, cor)
+        for rotulo, glifo, texto, cor in extras
+    ]
+    return _legenda(titulo, itens)
+
+
 def legenda_faixas(titulo: str, incluir_sem_dado: bool = False,
                    incluir_fora: bool = False) -> str:
     """Legenda do mapa por UF: faixas de ocupação e os dois cinzas."""
-    itens = [
-        (glifo, rotulo, texto, cor)
-        for _, rotulo, glifo, texto, cor in FAIXAS_OCUPACAO
-    ]
-    if incluir_sem_dado:
-        rotulo, glifo, texto, cor = SEM_DADO
-        itens.append((glifo, rotulo, texto, cor))
-    if incluir_fora:
-        rotulo, glifo, texto, cor = FORA_DO_RECORTE
-        itens.append((glifo, rotulo, texto, cor))
-    return _legenda(titulo, itens)
+    extras = ([SEM_DADO] if incluir_sem_dado else []) + \
+             ([FORA_DO_RECORTE] if incluir_fora else [])
+    return _legenda_de_faixas(titulo, FAIXAS_OCUPACAO, extras)
 
 
 def legenda_icpa(titulo: str, incluir_fora_do_indice: bool = False) -> str:
     """Legenda do mapa por município: faixas do ICPA e o fora do índice."""
-    itens = [
-        (glifo, rotulo, texto, cor)
-        for _, rotulo, glifo, texto, cor in FAIXAS_ICPA
-    ]
-    if incluir_fora_do_indice:
-        rotulo, glifo, texto, cor = FORA_DO_INDICE
-        itens.append((glifo, rotulo, texto, cor))
-    return _legenda(titulo, itens)
+    extras = [FORA_DO_INDICE] if incluir_fora_do_indice else []
+    return _legenda_de_faixas(titulo, FAIXAS_ICPA, extras)
 
 
 # Largura presumida do cartão do mapa, em pixels. A altura vem da grade e
@@ -1208,9 +1249,27 @@ def _vista(limites, altura: int) -> pdk.ViewState:
     )
 
 
+def _compactar(deck: pdk.Deck) -> str:
+    """Reescreve o JSON do pydeck sem espaço em branco."""
+    bruto = pdk.Deck.to_json(deck)
+    try:
+        return json.dumps(json.loads(bruto), separators=(",", ":"))
+    except ValueError:
+        return bruto
+
+
+# O `_deck` com underscore fica fora do hash do Streamlit: quem identifica
+# a entrada é `chave`, montada por quem constrói o mapa a partir do recorte
+# que o desenhou. Hashear o Deck custaria quase tanto quanto serializá-lo.
+@st.cache_data(show_spinner=False, max_entries=8)
+def _spec_compacto(chave: str, _deck: pdk.Deck) -> str:
+    """JSON do deck sem indentação, guardado por recorte."""
+    return _compactar(_deck)
+
+
 class _DeckCompacto(pdk.Deck):
     """
-    Deck que serializa sem indentação.
+    Deck que serializa sem indentação, uma vez por recorte.
 
     O pydeck escreve o JSON com indent=2 e o Streamlit manda essa string
     inteira ao navegador a cada rerun. Num mapa de 853 municípios a
@@ -1222,19 +1281,121 @@ class _DeckCompacto(pdk.Deck):
     que leem properties. Daqui sai só o espaço em branco. Se um dia a
     saída deixar de ser JSON parseável, devolve-se a original — payload
     grande é ruim, mapa quebrado é pior.
+
+    A compactação custa TRÊS passagens de JSON (serializa indentado,
+    reparseia, reserializa), 82 ms num estado grande. Sem cache elas
+    voltavam a cada rerun para reproduzir byte a byte a mesma string, já
+    que o desenho só depende do recorte — daí a `chave`.
     """
 
+    def __init__(self, *args, chave: str = "", **kwargs):
+        super().__init__(*args, **kwargs)
+        self._chave = chave
+
     def to_json(self) -> str:
-        bruto = super().to_json()
-        try:
-            return json.dumps(json.loads(bruto), separators=(",", ":"))
-        except ValueError:
-            return bruto
+        # Sem chave não há como reconhecer a entrada no cache, e guardar
+        # sob uma chave vazia devolveria o mapa errado na chamada seguinte.
+        if not self._chave:
+            return _compactar(self)
+        return _spec_compacto(self._chave, self)
+
+
+def _marca(dados: pd.DataFrame) -> str:
+    """
+    Assinatura curta de um recorte, para compor a chave de cache do mapa.
+
+    Não precisa ser criptográfica: só distinguir um recorte do seguinte.
+    O par (tamanho, soma dos códigos) já separa os recortes que o painel
+    consegue produzir, e custa uma passada em vez de serializar o frame.
+    """
+    return f"{len(dados)}:{pd.util.hash_pandas_object(dados, index=False).sum()}"
+
+
+def _feicoes(malha: dict, chave_malha: str, dados: pd.DataFrame,
+             chave_dados: str, valor: str, campos: tuple, *,
+             escala: str, titulo_por: str | None = None,
+             fora_do_recorte: bool = False) -> tuple[list, set]:
+    """
+    Feições coropléticas com cor, situação e dica já resolvidas.
+
+    Os dois mapas do painel diferiam em quatro pontos — qual malha, qual
+    coluna casa com ela, qual tabela de faixas colore e se existe o estado
+    "fora do recorte" — e repetiam quarenta linhas idênticas em volta
+    disso. Aqui a diferença vira parâmetro.
+
+    `escala` escolhe a régua: "ocupacao" para o mapa por UF, onde o corte é
+    absoluto e zero significa sem produção; "icpa" para o municipal, onde
+    nulo significa fora do índice. Ver o comentário de FAIXAS_ICPA para o
+    motivo de não serem a mesma.
+
+    Devolve as feições e o conjunto de rótulos de ausência que apareceram,
+    que é o que a legenda precisa saber para incluir ou não cada cinza.
+
+    O dicionário de junção sai de to_dict("index"): iterrows() instancia
+    uma Series por linha, e num estado com 853 municípios isso sozinho
+    custava 27 ms por rerun.
+    """
+    medida = pd.to_numeric(dados[valor], errors="coerce")
+    por_chave = (
+        dados.assign(**{valor: medida,
+                        chave_dados: dados[chave_dados].astype(str)})
+        .set_index(chave_dados, drop=False)
+        .to_dict("index")
+    )
+
+    feicoes, ausentes = [], set()
+    for feicao in malha["features"]:
+        identidade = str(feicao["properties"][chave_malha])
+        linha = por_chave.get(identidade)
+        bruto = None if linha is None else linha[valor]
+
+        # Ausente do resultado com recorte ativo é UF que o filtro deixou
+        # de fora; sem recorte, é ausência de dado mesmo. UF dentro do
+        # recorte e com ocupação zerada continua caindo em SEM_DADO pelo
+        # próprio valor, que é a leitura certa para ela.
+        if linha is None and fora_do_recorte:
+            rotulo, glifo, _, cor = FORA_DO_RECORTE
+        elif escala == "ocupacao":
+            rotulo, glifo, _, cor = faixa_ocupacao(bruto)
+        else:
+            rotulo, glifo, _, cor = faixa_icpa(bruto)
+
+        if rotulo in (SEM_DADO[0], FORA_DO_RECORTE[0], FORA_DO_INDICE[0]):
+            ausentes.add(rotulo)
+
+        if escala == "ocupacao":
+            texto_medida = ("—" if bruto is None or pd.isna(bruto) or bruto <= 0
+                            else pct(bruto))
+        else:
+            texto_medida = ("—" if bruto is None or pd.isna(bruto)
+                            else num(bruto, 1))
+
+        propriedades = {
+            chave_dados: identidade,
+            "titulo": identidade if linha is None or titulo_por is None
+                      else str(linha[titulo_por]),
+            "situacao": f"{glifo} {rotulo}",
+            "medida": texto_medida,
+            "cor": _rgba(cor, 235 if linha is not None else 140),
+        }
+        propriedades.update(
+            {coluna: "—" for coluna, _ in campos} if linha is None
+            else {coluna: str(linha[coluna]) for coluna, _ in campos}
+        )
+
+        feicoes.append({
+            "type": "Feature",
+            "geometry": feicao["geometry"],
+            "properties": propriedades,
+        })
+
+    return feicoes, ausentes
 
 
 def _deck_coropletico(feicoes, campos, *, rotulo_medida: str, altura: int,
                       vista: pdk.ViewState, identificador: str,
-                      espessura_linha: float = 1) -> pdk.Deck:
+                      espessura_linha: float = 1,
+                      chave: str = "") -> pdk.Deck:
     """
     Camada, dica de contexto e enquadramento — o que os dois mapas têm em
     comum.
@@ -1274,6 +1435,7 @@ def _deck_coropletico(feicoes, campos, *, rotulo_medida: str, altura: int,
                       "borderRadius": "6px", "padding": "8px 10px"},
         },
         height=altura,
+        chave=chave,
     )
 
 
@@ -1302,58 +1464,22 @@ def mapa_uf(dados: pd.DataFrame, valor: str, campos, *,
     do Streamlit resolve `{chave}` contra properties[chave], sem aceitar
     caminho pontilhado.
     """
-    malha = carregar_malha_uf()
-    medida = pd.to_numeric(dados[valor], errors="coerce")
-    por_uf = {
-        str(linha["uf"]): linha
-        for _, linha in dados.assign(**{valor: medida}).iterrows()
-    }
-
-    feicoes, houve_sem_dado, houve_fora = [], False, False
-    for feicao in malha["features"]:
-        sigla = feicao["properties"]["uf"]
-        linha = por_uf.get(sigla)
-        bruto = None if linha is None else linha[valor]
-        # Ausente do resultado com recorte ativo é UF que o filtro deixou
-        # de fora; sem recorte, é ausência de dado mesmo. UF dentro do
-        # recorte e com ocupação zerada continua caindo em SEM_DADO pelo
-        # próprio valor, que é a leitura certa para ela.
-        if linha is None and fora_do_recorte:
-            rotulo, glifo, _, cor = FORA_DO_RECORTE
-            houve_fora = True
-        else:
-            rotulo, glifo, _, cor = faixa_ocupacao(bruto)
-            if rotulo == SEM_DADO[0]:
-                houve_sem_dado = True
-
-        propriedades = {
-            "uf": sigla,
-            "titulo": sigla,
-            "situacao": f"{glifo} {rotulo}",
-            "medida": "—" if bruto is None or pd.isna(bruto) or bruto <= 0
-                      else pct(bruto),
-            "cor": _rgba(cor, 235 if linha is not None else 140),
-        }
-        if linha is None:
-            propriedades.update({coluna: "—" for coluna, _ in campos})
-        else:
-            propriedades.update({coluna: str(linha[coluna]) for coluna, _ in campos})
-
-        feicoes.append({
-            "type": "Feature",
-            "geometry": feicao["geometry"],
-            "properties": propriedades,
-        })
-
+    feicoes, ausentes = _feicoes(
+        carregar_malha_uf(), "uf", dados, "uf", valor, tuple(campos),
+        escala="ocupacao", fora_do_recorte=fora_do_recorte,
+    )
     deck = _deck_coropletico(
         feicoes, campos, rotulo_medida="Ocupação estimada", altura=altura,
         vista=pdk.ViewState(latitude=-14.5, longitude=-53.0, zoom=2.4,
                             min_zoom=2, max_zoom=6),
         identificador="ufs",
+        chave=f"ufs|{valor}|{fora_do_recorte}|{_marca(dados)}|{altura}",
     )
-    return deck, legenda_faixas(titulo_legenda or "Ocupação estimada",
-                                incluir_sem_dado=houve_sem_dado,
-                                incluir_fora=houve_fora)
+    return deck, legenda_faixas(
+        titulo_legenda or "Ocupação estimada",
+        incluir_sem_dado=SEM_DADO[0] in ausentes,
+        incluir_fora=FORA_DO_RECORTE[0] in ausentes,
+    )
 
 
 def mapa_municipios(dados: pd.DataFrame, uf: str, valor: str, campos, *,
@@ -1374,40 +1500,10 @@ def mapa_municipios(dados: pd.DataFrame, uf: str, valor: str, campos, *,
     A junção com a malha é pelo código do IBGE de sete dígitos, que a
     consulta traz em `cod_ibge` — a Gold guarda o do DATASUS, de seis.
     """
-    malha = carregar_malha_municipios(uf)
-    medida = pd.to_numeric(dados[valor], errors="coerce")
-    por_codigo = {
-        str(linha["cod_ibge"]): linha
-        for _, linha in dados.assign(**{valor: medida}).iterrows()
-    }
-
-    feicoes, houve_fora = [], False
-    for feicao in malha["features"]:
-        codigo = str(feicao["properties"]["codarea"])
-        linha = por_codigo.get(codigo)
-        bruto = None if linha is None else linha[valor]
-        rotulo, glifo, _, cor = faixa_icpa(bruto)
-        if rotulo == FORA_DO_INDICE[0]:
-            houve_fora = True
-
-        propriedades = {
-            "cod_ibge": codigo,
-            "titulo": codigo if linha is None else str(linha["municipio"]),
-            "situacao": f"{glifo} {rotulo}",
-            "medida": "—" if bruto is None or pd.isna(bruto) else num(bruto, 1),
-            "cor": _rgba(cor, 235 if linha is not None else 140),
-        }
-        if linha is None:
-            propriedades.update({coluna: "—" for coluna, _ in campos})
-        else:
-            propriedades.update({coluna: str(linha[coluna]) for coluna, _ in campos})
-
-        feicoes.append({
-            "type": "Feature",
-            "geometry": feicao["geometry"],
-            "properties": propriedades,
-        })
-
+    feicoes, ausentes = _feicoes(
+        carregar_malha_municipios(uf), "codarea", dados, "cod_ibge", valor,
+        tuple(campos), escala="icpa", titulo_por="municipio",
+    )
     deck = _deck_coropletico(
         feicoes, campos, rotulo_medida="ICPA", altura=altura,
         vista=_vista(limites_municipios(uf), altura),
@@ -1416,9 +1512,10 @@ def mapa_municipios(dados: pd.DataFrame, uf: str, valor: str, campos, *,
         # municípios no mesmo quadro, a linha de 1px come o preenchimento
         # e o mapa vira uma malha branca.
         espessura_linha=0.4,
+        chave=f"municipios|{uf}|{valor}|{_marca(dados)}|{altura}",
     )
     return deck, legenda_icpa(titulo_legenda or "Faixa de pressão (ICPA)",
-                              incluir_fora_do_indice=houve_fora)
+                              incluir_fora_do_indice=FORA_DO_INDICE[0] in ausentes)
 
 
 # ---------------------------------------------------------------------
@@ -1464,6 +1561,10 @@ TITULOS_COLUNA = {
 SIGLAS = {"icpa", "uf", "cnes", "sus", "uti", "sih", "ibge", "aih", "cid"}
 
 
+# Memoizada porque é chamada por dica de contexto e por rótulo de eixo, e
+# o conjunto de nomes de coluna do painel é pequeno e fixo: string entra,
+# string sai, sem estado nenhum no meio.
+@functools.lru_cache(maxsize=256)
 def titulo_coluna(nome: str) -> str:
     """Rótulo de exibição para um nome de coluna, do banco ou do modelo."""
     conhecido = TITULOS_COLUNA.get(nome.lower())
@@ -1513,23 +1614,15 @@ def e_aditiva(nome: str) -> bool:
 LIMITE_BARRAS = 20
 
 
-def e_numerica(serie: pd.Series) -> bool:
-    """
-    Numérica de fato, tolerando o que vem do banco como texto.
-
-    Pública porque a página do assistente decide a leitura do resultado
-    pelo mesmo critério com que aqui se decide a forma do gráfico.
-    """
-    convertida = pd.to_numeric(serie, errors="coerce")
-    return bool(convertida.notna().sum() >= max(1, int(len(serie) * 0.8)))
+def _e_numerica(convertida: pd.Series, linhas: int) -> bool:
+    """Numérica de fato, tolerando o que vem do banco como texto."""
+    return bool(convertida.notna().sum() >= max(1, int(linhas * 0.8)))
 
 
-def medida_principal(dados: pd.DataFrame, numericas: list[str]) -> str:
+def _medida_principal(convertidas: dict[str, pd.Series],
+                      numericas: list[str]) -> str:
     """
     Entre as colunas numéricas, a que o resultado já vem ordenando.
-
-    Pública porque a leitura do resultado, na página do assistente, precisa
-    comentar exatamente a medida que o gráfico desenhou.
 
     Toda consulta útil termina em ORDER BY, e é essa coluna que responde à
     pergunta — as outras são contexto. Pegar simplesmente a primeira
@@ -1537,13 +1630,64 @@ def medida_principal(dados: pd.DataFrame, numericas: list[str]) -> str:
     "populacao", que só está lá para dar escala ao município. Se nenhuma
     estiver ordenada, a primeira volta a ser um palpite tão bom quanto
     qualquer outro.
+
+    Recebe as séries JÁ convertidas em vez do DataFrame: quem chama acabou
+    de converter todas as colunas, e reconverter aqui era a segunda de três
+    passagens sobre os mesmos dados.
     """
     for coluna in numericas:
-        serie = pd.to_numeric(dados[coluna], errors="coerce").dropna()
+        serie = convertidas[coluna].dropna()
         if len(serie) >= 3 and (serie.is_monotonic_increasing
                                 or serie.is_monotonic_decreasing):
             return coluna
     return numericas[0]
+
+
+@dataclass(frozen=True)
+class _Perfil:
+    """Como um resultado do Select AI deve ser lido."""
+    tempo: str | None
+    numericas: list[str]
+    categoricas: list[str]
+    valor: str
+    medida: pd.Series      # já numérica e sem NaN
+    casas: int
+
+
+def _perfil(dados: pd.DataFrame) -> _Perfil | None:
+    """
+    Colunas e medida principal do resultado, calculadas uma vez só.
+
+    O gráfico e as notas precisam falar da MESMA medida — se divergirem, a
+    página desenha uma coisa e comenta outra. Antes cada um refazia o
+    trabalho por conta própria, e como e_numerica e medida_principal
+    convertiam de novo por dentro, uma coluna chegava a ser convertida seis
+    vezes por rerun.
+
+    Devolve None quando não há o que medir, e aí quem chama decide o que
+    dizer ao leitor.
+    """
+    tempo = next((c for c in dados.columns if c.lower() in COLUNAS_TEMPO), None)
+    # O tempo é identificado antes da medida, e sai da disputa: competência
+    # vem do banco como "202401", que é coercível a número e seria eleito
+    # medida se a ordem fosse a inversa.
+    convertidas = {c: pd.to_numeric(dados[c], errors="coerce")
+                   for c in dados.columns if c != tempo}
+    numericas = [c for c, s in convertidas.items() if _e_numerica(s, len(dados))]
+    if not numericas:
+        return None
+
+    categoricas = [c for c in convertidas if c not in numericas]
+    valor = _medida_principal(convertidas, numericas)
+    medida = convertidas[valor].dropna()
+    if medida.empty:
+        return None
+
+    return _Perfil(
+        tempo=tempo, numericas=numericas, categoricas=categoricas,
+        valor=valor, medida=medida,
+        casas=0 if float(medida.abs().max()) >= 100 else 2,
+    )
 
 
 def grafico_automatico(dados: pd.DataFrame):
@@ -1563,43 +1707,34 @@ def grafico_automatico(dados: pd.DataFrame):
     if len(dados) < 2:
         return None, "Resultado de uma linha só — os números acima já dizem tudo."
 
-    # O tempo é identificado antes da medida, e sai da disputa: competência
-    # vem do banco como "202401", que é coercível a número e seria eleito
-    # medida se a ordem fosse a inversa.
-    tempo = next((c for c in dados.columns if c.lower() in COLUNAS_TEMPO), None)
-
-    candidatas = [c for c in dados.columns if c != tempo]
-    numericas = [c for c in candidatas if e_numerica(dados[c])]
-    categoricas = [c for c in candidatas if c not in numericas]
-
-    if not numericas:
+    perfil = _perfil(dados)
+    if perfil is None:
         return None, "Nenhuma coluna numérica para medir."
-
-    valor = medida_principal(dados, numericas)
-    medida = pd.to_numeric(dados[valor], errors="coerce")
-    if medida.dropna().empty or medida.dropna().nunique() < 2:
+    if perfil.medida.nunique() < 2:
         return None, "A medida não varia entre as linhas."
 
-    casas = 0 if float(medida.dropna().abs().max()) >= 100 else 2
+    valor, casas = perfil.valor, perfil.casas
     titulo = titulo_coluna(valor)
 
-    if tempo:
+    if perfil.tempo:
         base = (
-            dados.assign(**{valor: medida})
+            dados.assign(**{valor: perfil.medida})
             .dropna(subset=[valor])
-            .sort_values(tempo)
-            .astype({tempo: "string"})
+            .sort_values(perfil.tempo)
+            .astype({perfil.tempo: "string"})
         )
         base = base.assign(rotulo_valor=base[valor].map(lambda v: num(v, casas)))
         return (
-            series_temporais(base, tempo, [(valor, titulo, "rotulo_valor")], altura=230),
-            f"Série de **{titulo.lower()}** por {titulo_coluna(tempo).lower()}.",
+            series_temporais(base, perfil.tempo,
+                             [(valor, titulo, "rotulo_valor")], altura=230),
+            f"Série de **{titulo.lower()}** por "
+            f"{titulo_coluna(perfil.tempo).lower()}.",
         )
 
-    if categoricas:
-        categoria = categoricas[0]
+    if perfil.categoricas:
+        categoria = perfil.categoricas[0]
         base = (
-            dados.assign(**{valor: medida})
+            dados.assign(**{valor: perfil.medida})
             .dropna(subset=[valor])
             .nlargest(LIMITE_BARRAS, valor)
             .astype({categoria: "string"})
@@ -1630,32 +1765,25 @@ def leitura_do_resultado(dados: pd.DataFrame) -> list[str]:
     Select AI tem espaço próprio na página, e misturar as duas tiraria do
     leitor a chance de saber o que é dado e o que é redação.
 
-    Mora aqui, e não em ai.py, porque depende do mesmo par que decide a
-    forma do gráfico — medida_principal e titulo_coluna. A leitura e o
-    desenho precisam falar da mesma medida.
+    Mora aqui, e não em ai.py, porque depende do mesmo _perfil que decide a
+    forma do gráfico. A leitura e o desenho precisam falar da mesma medida,
+    e é por isso que os dois saem da mesma leitura das colunas.
     """
     if dados is None or dados.empty or len(dados) < 2:
         return []
 
-    tempo = next((c for c in dados.columns if c.lower() in COLUNAS_TEMPO), None)
-    numericas = [c for c in dados.columns if c != tempo and e_numerica(dados[c])]
-    categoricas = [c for c in dados.columns
-                   if c not in numericas and c != tempo]
-    if not numericas:
+    perfil = _perfil(dados)
+    if perfil is None:
         return []
 
-    valor = medida_principal(dados, numericas)
-    medida = pd.to_numeric(dados[valor], errors="coerce").dropna()
-    if medida.empty:
-        return []
-
+    valor, medida, casas = perfil.valor, perfil.medida, perfil.casas
     nome = rotulo_medida(valor)
-    casas = 0 if float(medida.abs().max()) >= 100 else 2
     notas: list[str] = []
 
-    if categoricas:
+    if perfil.categoricas:
         notas.append(
-            f"Maior **{nome}**: {dados.loc[medida.idxmax(), categoricas[0]]}, "
+            f"Maior **{nome}**: "
+            f"{dados.loc[medida.idxmax(), perfil.categoricas[0]]}, "
             f"com {num(medida.max(), casas)}."
         )
 

@@ -56,11 +56,19 @@ faixas = db.distribuicao_faixas(
     filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql, filtros.porte_sql
 )
 
-criticos = 0
-if not faixas.empty:
-    linha = faixas.query("faixa_pressao in ['Crítica', 'Alta']")
-    criticos = int(linha["municipios"].sum()) if not linha.empty else 0
+# As duas faixas de cima, o recorte delas e a ordenação por tamanho saem
+# daqui uma vez só: a fita, a leitura ao lado e a lista embaixo do cartão
+# pediam as mesmas três coisas, cada uma recalculando por conta própria.
+# O .isin() troca três passagens do parser de expressão do pandas.query()
+# por uma máscara direta.
+FAIXAS_CRITICAS = ("Crítica", "Alta")
 
+criticas = (faixas[faixas["faixa_pressao"].isin(FAIXAS_CRITICAS)]
+            if not faixas.empty else faixas)
+faixas_por_tamanho = (faixas.sort_values("municipios", ascending=False)
+                      if not faixas.empty else faixas)
+
+criticos = int(criticas["municipios"].sum()) if not criticas.empty else 0
 total_classificados = int(faixas["municipios"].sum()) if not faixas.empty else 0
 
 ui.fita_indicadores([
@@ -98,7 +106,6 @@ ui.fita_indicadores([
 # ---------------------------------------------------------------------
 
 col_capacidade, col_matriz, col_leitura = st.columns([1.2, 1.2, 1], gap="small")
-altura_grafico = ui.altura_util(ui.ALTURA_CARTAO)
 
 with col_capacidade:
     capacidade = db.capacidade_x_demanda(
@@ -186,70 +193,73 @@ with col_matriz:
     # essa coluna antes de gravar. Enquanto ela não existir, a matriz usa
     # a faixa do ICPA, que é a dimensão disponível.
 
+# Fora do `with`: aninhada, a função era recriada a cada rerun e os nomes
+# dos parâmetros sombreavam os globais de mesmo nome — ler o corpo exigia
+# saber qual dos dois estava em jogo. Os recortes chegam prontos de cima,
+# em vez de cada frase refazer o próprio filtro e a própria ordenação.
+def leitura(todas: pd.DataFrame, criticas: pd.DataFrame,
+            por_tamanho: pd.DataFrame, matriz: pd.DataFrame) -> list[str]:
+    """
+    Frases derivadas do recorte em tela.
+
+    Cada uma sai de uma conta sobre os mesmos dados dos gráficos ao
+    lado — nada aqui é texto fixo, e nada depende de LLM. Se o filtro
+    muda, a leitura muda junto.
+    """
+    notas: list[str] = []
+    if todas.empty:
+        return notas
+
+    total = int(todas["municipios"].sum())
+    if total and not criticas.empty:
+        quantos = int(criticas["municipios"].sum())
+        internacoes = int(criticas["internacoes"].sum())
+        total_internacoes = int(todas["internacoes"].sum())
+        parcela = internacoes / total_internacoes * 100 if total_internacoes else 0
+        notas.append(
+            f"**{ui.num(quantos)}** municípios "
+            f"({quantos / total * 100:.0f}% dos classificados) estão em "
+            f"pressão alta ou crítica, e respondem por "
+            f"**{ui.pct(parcela, 0)}** das internações."
+        )
+
+    if not matriz.empty:
+        # A dimensão da matriz muda com o recorte, então a frase fala
+        # de região ou de UF conforme o que está desenhado ao lado.
+        criticas_por_area = (
+            matriz[matriz["faixa_pressao"].isin(FAIXAS_CRITICAS)]
+            .groupby("dimensao")["municipios"].sum().sort_values(ascending=False)
+        )
+        if not criticas_por_area.empty:
+            notas.append(
+                f"Maior concentração em **{criticas_por_area.index[0]}**, com "
+                f"**{ui.num(int(criticas_por_area.iloc[0]))}** municípios "
+                "nessas duas faixas."
+            )
+
+    maior = por_tamanho.iloc[0]
+    notas.append(
+        f"Faixa mais numerosa: **{maior['faixa_pressao']}**, com "
+        f"{ui.num(maior['municipios'])} municípios e "
+        f"{ui.num(maior['internacoes'])} internações."
+    )
+    return notas
+
+
 with col_leitura:
     bloco = ui.painel("Leitura dos números", chave="leitura",
                       altura=ui.ALTURA_CARTAO)
 
-    def leitura(faixas: pd.DataFrame, matriz: pd.DataFrame) -> list[str]:
-        """
-        Frases derivadas do recorte em tela.
-
-        Cada uma sai de uma conta sobre os mesmos dados dos gráficos ao
-        lado — nada aqui é texto fixo, e nada depende de LLM. Se o filtro
-        muda, a leitura muda junto.
-        """
-        notas: list[str] = []
-        if faixas.empty:
-            return notas
-
-        total = int(faixas["municipios"].sum())
-        criticas = faixas.query("faixa_pressao in ['Crítica', 'Alta']")
-        if total and not criticas.empty:
-            quantos = int(criticas["municipios"].sum())
-            internacoes = int(criticas["internacoes"].sum())
-            total_internacoes = int(faixas["internacoes"].sum())
-            parcela = internacoes / total_internacoes * 100 if total_internacoes else 0
-            notas.append(
-                f"**{ui.num(quantos)}** municípios "
-                f"({quantos / total * 100:.0f}% dos classificados) estão em "
-                f"pressão alta ou crítica, e respondem por "
-                f"**{ui.pct(parcela, 0)}** das internações."
-            )
-
-        if not matriz.empty:
-            # A dimensão da matriz muda com o recorte, então a frase fala
-            # de região ou de UF conforme o que está desenhado ao lado.
-            criticas_por_area = (
-                matriz.query("faixa_pressao in ['Crítica', 'Alta']")
-                .groupby("dimensao")["municipios"].sum().sort_values(ascending=False)
-            )
-            if not criticas_por_area.empty:
-                notas.append(
-                    f"Maior concentração em **{criticas_por_area.index[0]}**, com "
-                    f"**{ui.num(int(criticas_por_area.iloc[0]))}** municípios "
-                    "nessas duas faixas."
-                )
-
-        maior = faixas.sort_values("municipios", ascending=False).iloc[0]
-        notas.append(
-            f"Faixa mais numerosa: **{maior['faixa_pressao']}**, com "
-            f"{ui.num(maior['municipios'])} municípios e "
-            f"{ui.num(maior['internacoes'])} internações."
-        )
-        return notas
-
     with bloco:
-        for nota in leitura(faixas, matriz):
+        for nota in leitura(faixas, criticas, faixas_por_tamanho, matriz):
             st.markdown(f":material/arrow_right: {nota}")
         if not faixas.empty:
             st.divider()
-            for _, linha in faixas.sort_values(
-                "municipios", ascending=False
-            ).iterrows():
+            for linha in faixas_por_tamanho.itertuples(index=False):
                 st.markdown(
-                    f"**{linha['faixa_pressao']}** · "
-                    f"{ui.num(linha['municipios'])} municípios  \n"
-                    f":grey[{ui.num(linha['internacoes'])} internações]"
+                    f"**{linha.faixa_pressao}** · "
+                    f"{ui.num(linha.municipios)} municípios  \n"
+                    f":grey[{ui.num(linha.internacoes)} internações]"
                 )
 
 # ---------------------------------------------------------------------

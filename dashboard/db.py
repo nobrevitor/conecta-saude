@@ -43,17 +43,6 @@ def get_pool() -> oracledb.ConnectionPool:
     )
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def query(sql: str, params: dict | None = None) -> pd.DataFrame:
-    """Executa consulta e devolve DataFrame com colunas em minúsculas."""
-    with get_pool().acquire() as conexao:
-        with conexao.cursor() as cursor:
-            cursor.execute(sql, params or {})
-            colunas = [c[0].lower() for c in cursor.description]
-            dados = cursor.fetchall()
-    return pd.DataFrame(dados, columns=colunas)
-
-
 def executar_sem_cache(sql: str, params: dict | None = None) -> pd.DataFrame:
     """Versão sem cache, para consultas geradas dinamicamente pelo Select AI."""
     with get_pool().acquire() as conexao:
@@ -64,9 +53,23 @@ def executar_sem_cache(sql: str, params: dict | None = None) -> pd.DataFrame:
     return pd.DataFrame(dados, columns=colunas)
 
 
+# O teto de entradas não é zelo: cada combinação de competência, região, UF
+# e porte vira uma chave própria, e sem limite o cache cresce durante a
+# hora inteira do TTL. O plano gratuito tem 1 GB para o processo todo.
+@st.cache_data(ttl=3600, show_spinner=False, max_entries=128)
+def query(sql: str, params: dict | None = None) -> pd.DataFrame:
+    """Executa consulta e devolve DataFrame com colunas em minúsculas."""
+    return executar_sem_cache(sql, params)
+
+
+# TTL curto e cache próprio: o rodapé das três páginas chama isto, e sem
+# cache aqui a checagem passava pelo `query` — pagando a cópia de um
+# DataFrame por rerun, e voltando ao banco toda vez que o botão Atualizar
+# limpasse o cache de dados.
+@st.cache_data(ttl=60, show_spinner=False)
 def testar_conexao() -> tuple[bool, str]:
     try:
-        df = query("SELECT 1 AS ok FROM dual")
+        df = executar_sem_cache("SELECT 1 AS ok FROM dual")
         return (not df.empty), "Conectado"
     except Exception as erro:
         return False, str(erro)
@@ -266,7 +269,6 @@ def indicadores_gerais(competencia: str | None, regiao=None, uf=None,
     return df.iloc[0] if not df.empty else pd.Series(dtype="object")
 
 
-@st.cache_data(ttl=3600)
 def variacao_anterior(competencia: str | None, regiao=None, uf=None,
                       porte=None) -> pd.Series:
     """
@@ -275,6 +277,10 @@ def variacao_anterior(competencia: str | None, regiao=None, uf=None,
     Sem competência escolhida não existe período anterior: o recorte já é
     o ano inteiro. Devolve vazio, e os cartões saem sem variação — o que
     é a leitura honesta, e não um delta contra um mês arbitrário.
+
+    Sem cache próprio de propósito: o corpo só escolhe uma competência e
+    repassa para indicadores_gerais, que já é cacheada. Uma segunda camada
+    aqui guardaria a mesma Series duas vezes.
     """
     if not competencia:
         return pd.Series(dtype="object")
@@ -568,7 +574,8 @@ def ranking_sobrecarga(competencia: str | None, regiao=None, uf=None,
     if dados.empty:
         return dados
 
-    dados = dados.copy()
+    # Sem .copy() defensivo: o st.cache_data já devolve uma cópia nova a
+    # cada chamada — é assim que ele protege o próprio cache de mutação.
     dados.insert(0, "ranking_nacional", range(1, len(dados) + 1))
     dados["ranking_uf"] = (
         dados.groupby("uf")["icpa"].rank(method="min", ascending=False).astype(int)

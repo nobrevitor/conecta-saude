@@ -100,8 +100,15 @@ if enviar and pergunta:
     st.session_state.pop("pergunta_escolhida", None)
 
     with st.spinner("Traduzindo a pergunta em SQL e consultando o banco..."):
-        resposta = ai.perguntar(pergunta, competencia)
+        st.session_state["resposta"] = ai.perguntar(pergunta, competencia)
 
+# A resposta vive na sessão, e não na variável do rerun em que foi pedida.
+# Os botões de "Continuar por aqui" chamam st.rerun(): se a análise só
+# existisse dentro do `if` acima, ela sumiria da tela no clique e a
+# pergunta seguinte teria de ser gerada do zero — duas idas ao modelo para
+# reexibir o que já estava pronto.
+resposta = st.session_state.get("resposta")
+if resposta is not None:
     if resposta.erro:
         st.error(resposta.erro, icon=":material/error:")
         if resposta.sql:
@@ -142,7 +149,7 @@ if enviar and pergunta:
                 st.dataframe(resposta.dados, width="stretch", hide_index=True)
                 st.download_button(
                     "Baixar em CSV",
-                    resposta.dados.to_csv(index=False).encode("utf-8"),
+                    ui.csv_para_download(resposta.dados),
                     file_name="conecta_saude_consulta.csv",
                     mime="text/csv",
                     icon=":material/download:",

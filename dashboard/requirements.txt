@@ -1,10 +1,6 @@
-altair
-pandas
-pyarrow
-dataclasses
-dbfread
-ipykernel
-jupyterlab
-oracledb
-streamlit
-pydeck
+altair==6.2.2
+oracledb==4.0.2
+pandas==3.0.5
+pyarrow==25.0.1
+pydeck==0.9.3
+streamlit==1.62.0
