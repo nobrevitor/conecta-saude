@@ -217,17 +217,15 @@ with gestao_col:
 # Linha 2 · série no tempo e ranking
 # ---------------------------------------------------------------------
 
-# Os dois cartões desta linha crescem com o conteúdo, em vez de recortá-lo:
-# a série empilha dois painéis e a tabela lista dez linhas, e nenhum dos
-# dois cabia na altura fixa — o excedente virava rolagem dentro do bloco.
-# O alinhamento passa a vir do contêiner nomeado, cujo CSS no app.py
-# estica as duas colunas até a mais alta da linha.
-linha_tempo = st.container(key="linha_tempo")
-serie_col, ranking_col = linha_tempo.columns([1.6, 1], gap="small")
+# A altura desta linha vem do conteúdo, e não o contrário: ALTURA_CARTAO_TABELA
+# é grande o bastante para as dez linhas da tabela e para os dois painéis da
+# série caberem sem rolagem. Fixa nos dois cartões, os dois terminam na mesma
+# linha — alinhamento por construção, sem depender de CSS.
+serie_col, ranking_col = st.columns([1.6, 1], gap="small")
 
 with serie_col:
     bloco = ui.painel("Evolução mensal", "Doze competências de 2024",
-                      chave="serie")
+                      chave="serie", altura=ui.ALTURA_CARTAO_TABELA)
     serie = db.evolucao_mensal(filtros.regiao_sql, filtros.uf_sql)
     if serie.empty:
         bloco.info("Sem dados.")
@@ -242,19 +240,20 @@ with serie_col:
         # num segundo eixo y: as duas séries têm ordens de grandeza
         # distintas, e sobrepô-las num eixo comum alinharia as curvas num
         # ponto arbitrário, sugerindo uma correlação que o dado não afirma.
-        bloco.altair_chart(
-            ui.series_temporais(
-                serie, "rotulo",
-                [("internacoes", "Internações", "rot_internacoes"),
-                 ("permanencia_media", "Permanência média (dias)",
-                  "rot_permanencia")],
-                # Não é mais teto, e sim proporção: metade da altura útil
-                # do cartão baixo, descontado o eixo que os dois painéis
-                # dividem. O cartão acompanha o que sair daqui.
-                altura=(ui.altura_util(ui.ALTURA_CARTAO_BAIXO) - 46) // 2,
-            ),
-            width="stretch", theme=None,
+        # Dois gráficos separados, empilhados: cada um é uma camada, que
+        # é a forma que o Streamlit ajusta à largura do contêiner. O
+        # desconto de 96px cobre os dois títulos de painel, o respiro
+        # entre eles e o eixo de competências embaixo do segundo.
+        graficos = ui.series_temporais(
+            serie, "rotulo",
+            [("internacoes", "Internações", "rot_internacoes"),
+             ("permanencia_media", "Permanência média (dias)",
+              "rot_permanencia")],
+            altura=(ui.altura_util(ui.ALTURA_CARTAO_TABELA) - 96) // 2,
         )
+        with bloco:
+            for grafico in graficos:
+                st.altair_chart(grafico, width="stretch", theme=None)
 
 with ranking_col:
     # O ranking acompanha a granularidade do mapa ao lado. Com uma UF
@@ -262,7 +261,8 @@ with ranking_col:
     # o que não é ranking nenhum.
     titulo_topo = ("Top municípios por internações" if filtros.uf_sql
                    else "Top UFs por internações")
-    bloco = ui.painel(titulo_topo, chave="topo")
+    bloco = ui.painel(titulo_topo, chave="topo",
+                      altura=ui.ALTURA_CARTAO_TABELA)
 
     if not dados_mapa.empty:
         topo = (
@@ -293,10 +293,11 @@ with ranking_col:
             }
         bloco.dataframe(
             topo[colunas],
-            # Altura automática: são dez linhas, e a tabela mostra as dez.
-            # Viewport fixo aqui só devolveria a rolagem para dentro do
-            # cartão, que é o que se quis tirar.
-            width="stretch", hide_index=True, height="auto",
+            # Viewport do tamanho do miolo do cartão, que já foi
+            # dimensionado para as dez linhas caberem: a tabela ocupa o
+            # cartão inteiro e não sobra rolagem em lugar nenhum.
+            width="stretch", hide_index=True,
+            height=ui.altura_util(ui.ALTURA_CARTAO_TABELA),
             column_config={
                 "internacoes": st.column_config.NumberColumn(
                     "Internações", format="localized"),

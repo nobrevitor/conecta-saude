@@ -154,6 +154,11 @@ class Filtros:
 ALTURA_CARTAO = 404          # linha padrão
 ALTURA_CARTAO_BAIXO = 366    # linha de série temporal e tabelas
 ALTURA_CARTAO_ALTO = 486     # linha de um cartão só, largo
+# Linha da série com o ranking: aqui quem manda na altura é a tabela de
+# dez linhas, que precisa de ~385px para aparecer inteira. Dimensionada
+# pelo conteúdo, e não pelo desenho da grade, justamente para nenhum dos
+# dois cartões precisar de rolagem interna.
+ALTURA_CARTAO_TABELA = 500
 
 # Desconto do cabeçalho do cartão, do respiro interno e do afastamento
 # entre título e gráfico (.cs-cartao-topo no app.py), para o gráfico não
@@ -757,29 +762,40 @@ def barras_agrupadas(dados: pd.DataFrame, categoria: str, medidas, *,
 
 def series_temporais(dados: pd.DataFrame, x: str, series, *, altura: int = 170):
     """
-    Séries no tempo empilhadas, compartilhando o eixo horizontal.
-    `series` é uma lista de (campo, título, coluna_rótulo).
+    Séries no tempo, uma por painel, compartilhando o eixo horizontal.
+    `series` é uma lista de (campo, título, coluna_rótulo). Devolve UMA
+    LISTA de gráficos, para a view empilhar com uma chamada cada.
 
     Grandezas de ordens diferentes ganham painéis separados em vez de
     um segundo eixo y, que alinharia as curvas num ponto arbitrário.
     Só o último ponto recebe rótulo — número em cada marcador vira
     ruído.
+
+    Os painéis já viveram num vconcat, e a régua acompanhava os dois ao
+    mesmo tempo por um seletor compartilhado. Não dá mais: um vconcat de
+    camadas cai no caminho `autosize: pad` do Streamlit, que não ajusta a
+    largura ao contêiner — a limitação está documentada no vega_charts.py
+    dele, e o resultado era o gráfico passando por fora das bordas do
+    cartão. Gráficos separados são cada um uma camada, entram no
+    `autosize: fit` como todos os outros do painel e cabem na largura.
+
+    O preço é a régua deixar de ser simultânea nos dois painéis. A dica
+    de contexto continua completa em cada um, e o eixo compartilhado
+    mantém a leitura alinhada na vertical.
     """
     ultimo = dados[x].iloc[-1]
-    # Nomeado de propósito: os painéis compartilham um seletor só, para que
-    # a régua acompanhe a mesma competência nos dois ao mesmo tempo.
-    seletor = alt.selection_point(
-        name="competencia_sob_cursor", nearest=True, on="pointerover",
-        fields=[x], empty=False,
-    )
-    dicas = [alt.Tooltip(f"{x}:N", title="Competência")] + [
-        alt.Tooltip(f"{coluna}:N", title=titulo) for _, titulo, coluna in series
-    ]
-    paineis = []
+    graficos = []
 
     for indice, (campo, titulo, rotulo) in enumerate(series):
         eixo_x = (_eixo_categoria() if indice == len(series) - 1
                   else alt.Axis(title=None, labels=False, grid=False, ticks=False))
+        seletor = alt.selection_point(
+            name=f"ponto_{campo}", nearest=True, on="pointerover",
+            fields=[x], empty=False,
+        )
+        dicas = [alt.Tooltip(f"{x}:N", title="Competência")] + [
+            alt.Tooltip(f"{coluna}:N", title=nome) for _, nome, coluna in series
+        ]
         base = alt.Chart(dados).encode(
             x=alt.X(f"{x}:N", axis=eixo_x),
             y=alt.Y(f"{campo}:Q", axis=_eixo_valor(),
@@ -803,13 +819,15 @@ def series_temporais(dados: pd.DataFrame, x: str, series, *, altura: int = 170):
             .encode(text=f"{rotulo}:N")
             .transform_filter(alt.datum[x] == ultimo)
         )
-        paineis.append(
-            (regua + linha + marcadores + fim).properties(height=altura, title=titulo)
+        graficos.append(
+            _acabamento(
+                (regua + linha + marcadores + fim)
+                .properties(height=altura, title=titulo)
+                .add_params(seletor)
+            )
         )
 
-    # O parâmetro é declarado uma vez no topo do vconcat: assim vale para
-    # os dois painéis em vez de virar um seletor independente por painel.
-    return _acabamento(alt.vconcat(*paineis, spacing=18).add_params(seletor))
+    return graficos
 
 
 def mapa_calor(dados: pd.DataFrame, linha: str, coluna: str, valor: str,
