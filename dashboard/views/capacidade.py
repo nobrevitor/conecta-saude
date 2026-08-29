@@ -322,44 +322,62 @@ with bloco:
             )
 
 # ---------------------------------------------------------------------
-# Linha 3 · vazios, hospitais e deslocamento
+# Linha 3 · vazios assistenciais
+# ---------------------------------------------------------------------
+# Faixa própria, como a do ranking. Sozinho na linha, o cartão pode
+# crescer com o conteúdo sem desalinhar vizinho nenhum, e a tabela deixa
+# de espremer cinco colunas em um terço da tela — sobra largura para a
+# demanda que esses municípios geram e para o destino com a UF.
+
+bloco = ui.painel(
+    "Vazios assistenciais",
+    "Municípios sem leito SUS e acima de 10 mil habitantes",
+    chave="vazios",
+)
+vazios = db.vazios_assistenciais(
+    filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql,
+    filtros.porte_sql,
+)
+if vazios.empty:
+    bloco.info("Nenhum município nesta condição no recorte.")
+else:
+    # A evasão é a coluna que interessa aqui, então o ordenamento passa
+    # a ser por ela — a população continua como leitura de porte.
+    vazios = vazios.sort_values("taxa_evasao", ascending=False,
+                                na_position="last").assign(
+        destino=lambda d: d["municipio_destino"].fillna("—")
+                          + " · " + d["uf_destino"].fillna(""),
+    )
+    bloco.dataframe(
+        vazios[["municipio", "uf", "populacao", "internacoes_residentes",
+                "taxa_evasao", "destino"]],
+        width="stretch", hide_index=True,
+        height=ui.altura_util(ui.ALTURA_CARTAO_ALTO),
+        column_config={
+            "municipio": st.column_config.TextColumn("Município"),
+            "uf": st.column_config.TextColumn("UF", width="small"),
+            "populacao": st.column_config.NumberColumn(
+                "População", format="localized"),
+            "internacoes_residentes": st.column_config.NumberColumn(
+                "Internações de residentes", format="localized",
+                help="Internações de moradores do município, onde quer que "
+                     "tenham sido atendidas. É a demanda que ele gera sem "
+                     "ter leito próprio."),
+            "taxa_evasao": st.column_config.ProgressColumn(
+                "Evasão", format="%.1f%%", min_value=0, max_value=100,
+                color=ui.CORES_FAIXA["Crítica"],
+                help="Parte das internações de residentes que ocorreu "
+                     "fora do município."),
+            "destino": st.column_config.TextColumn("Destino principal"),
+        },
+    )
+
+# ---------------------------------------------------------------------
+# Linha 4 · estabelecimentos e deslocamento
 # ---------------------------------------------------------------------
 
-col_vazios, col_hospitais, col_evasao = st.columns(3, gap="small")
+col_hospitais, col_evasao = st.columns(2, gap="small")
 altura_tabela = ui.altura_util(ui.ALTURA_CARTAO)
-
-with col_vazios:
-    bloco = ui.painel("Vazios assistenciais",
-                      "Sem leito SUS e acima de 10 mil habitantes",
-                      chave="vazios", altura=ui.ALTURA_CARTAO)
-    vazios = db.vazios_assistenciais(
-        filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql,
-        filtros.porte_sql,
-    )
-    if vazios.empty:
-        bloco.info("Nenhum município nesta condição no recorte.")
-    else:
-        # A evasão é a coluna que interessa aqui, então o ordenamento passa
-        # a ser por ela — a população continua como leitura de porte.
-        vazios = vazios.sort_values("taxa_evasao", ascending=False,
-                                    na_position="last")
-        bloco.dataframe(
-            vazios[["municipio", "uf", "populacao", "taxa_evasao",
-                    "municipio_destino"]],
-            width="stretch", hide_index=True, height=altura_tabela,
-            column_config={
-                "municipio": st.column_config.TextColumn("Município"),
-                "uf": st.column_config.TextColumn("UF", width="small"),
-                "populacao": st.column_config.NumberColumn(
-                    "População", format="localized"),
-                "taxa_evasao": st.column_config.ProgressColumn(
-                    "Evasão", format="%.1f%%", min_value=0, max_value=100,
-                    color=ui.CORES_FAIXA["Crítica"],
-                    help="Parte das internações de residentes que ocorreu "
-                         "fora do município."),
-                "municipio_destino": st.column_config.TextColumn("Destino"),
-            },
-        )
 
 with col_hospitais:
     bloco = ui.painel("Estabelecimentos sob pressão",
