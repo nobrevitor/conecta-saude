@@ -861,9 +861,9 @@ def series_temporais(dados: pd.DataFrame, x: str, series, *, altura: int = 170):
 
 
 def mapa_calor(dados: pd.DataFrame, linha: str, coluna: str, valor: str,
-               rotulo: str, *, ordem_coluna=None, titulo_valor: str = "",
-               titulo_legenda: str | None = None, passo: int | None = None,
-               altura_cartao: int | None = None):
+               rotulo: str, *, ordem_coluna=None, ordem_linha=None,
+               titulo_valor: str = "", titulo_legenda: str | None = None,
+               passo: int | None = None, altura_cartao: int | None = None):
     """
     Grade categoria x categoria com a contagem em cada célula.
 
@@ -890,7 +890,10 @@ def mapa_calor(dados: pd.DataFrame, linha: str, coluna: str, valor: str,
     base = alt.Chart(dados).encode(
         x=alt.X(f"{coluna}:N", sort=ordem_coluna,
                 axis=alt.Axis(title=None, grid=False, labelAngle=0, orient="top")),
-        y=alt.Y(f"{linha}:N", axis=_eixo_categoria()),
+        # Sem ordem explícita o Vega ordena as linhas em ordem
+        # alfabética, que para faixas de porte sai errada — "100 a 500
+        # mil" viria antes de "20 a 100 mil".
+        y=alt.Y(f"{linha}:N", sort=ordem_linha, axis=_eixo_categoria()),
     )
     celulas = base.mark_rect(
         cornerRadius=3, stroke=COR_SUPERFICIE, strokeWidth=2,
