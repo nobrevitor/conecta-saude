@@ -112,6 +112,66 @@ def _filtrar(sql: str, params: dict, regiao=None, uf=None, porte=None,
     return sql, params
 
 
+# Faixas de porte, com os mesmos cortes do gold_icpa_classificado
+# (03_gold.sql). Aqui elas viram intervalo de população porque só a Gold
+# do ICPA guarda a faixa já classificada; as demais guardam a população
+# crua, e repetir o CASE em cada consulta espalharia a regra por meia
+# dúzia de lugares.
+#
+# Um detalhe herdado da Gold: lá o CASE termina em ELSE, então município
+# de população NULA cai em "Acima de 500 mil". Por intervalo ele fica de
+# fora de todas as faixas, que é a leitura correta — é um código de
+# município sem correspondência no IBGE, sem UF e sem população.
+FAIXAS_PORTE = {
+    "Até 20 mil": (None, 20000),
+    "20 a 100 mil": (20000, 100000),
+    "100 a 500 mil": (100000, 500000),
+    "Acima de 500 mil": (500000, None),
+}
+
+
+def _porte(sql: str, params: dict, porte, alias: str = "") -> tuple[str, dict]:
+    """Recorte por faixa de porte onde a tabela guarda a população."""
+    if not porte:
+        return sql, params
+    piso, teto = FAIXAS_PORTE.get(porte, (None, None))
+    p = f"{alias}." if alias else ""
+    if piso is not None:
+        sql += f" AND {p}populacao >= :pop_piso"
+        params["pop_piso"] = piso
+    if teto is not None:
+        sql += f" AND {p}populacao < :pop_teto"
+        params["pop_teto"] = teto
+    return sql, params
+
+
+def _porte_do_municipio(sql: str, params: dict, porte,
+                        alias: str = "") -> tuple[str, dict]:
+    """
+    Recorte por porte onde a tabela NÃO guarda a população.
+
+    É o caso do gold_hospital, que é por estabelecimento. O porte entra
+    por subconsulta na dimensão, que é onde a população mora, e sem tocar
+    na agregação da consulta principal.
+    """
+    if not porte:
+        return sql, params
+    piso, teto = FAIXAS_PORTE.get(porte, (None, None))
+    condicoes = []
+    if piso is not None:
+        condicoes.append("populacao >= :pop_piso")
+        params["pop_piso"] = piso
+    if teto is not None:
+        condicoes.append("populacao < :pop_teto")
+        params["pop_teto"] = teto
+    if not condicoes:
+        return sql, params
+    p = f"{alias}." if alias else ""
+    sql += (f" AND {p}cod_municipio IN (SELECT cod_municipio"
+            f" FROM silver_municipio WHERE {' AND '.join(condicoes)})")
+    return sql, params
+
+
 def _competencia(sql: str, params: dict, competencia: str | None,
                  alias: str = "") -> tuple[str, dict]:
     """Filtra um mês, ou nenhum filtro quando competencia é None."""
@@ -169,7 +229,8 @@ def listar_ufs(regiao: str | None = None) -> list[str]:
 # =====================================================================
 
 @st.cache_data(ttl=3600)
-def indicadores_gerais(competencia: str | None, regiao=None, uf=None) -> pd.Series:
+def indicadores_gerais(competencia: str | None, regiao=None, uf=None,
+                       porte=None) -> pd.Series:
     """
     Cartões do topo. Agrega direto do fato para respeitar o recorte.
 
@@ -200,12 +261,14 @@ def indicadores_gerais(competencia: str | None, regiao=None, uf=None) -> pd.Seri
     """
     sql, params = _competencia(sql, {}, competencia)
     sql, params = _filtrar(sql, params, regiao, uf)
+    sql, params = _porte(sql, params, porte)
     df = query(sql, params)
     return df.iloc[0] if not df.empty else pd.Series(dtype="object")
 
 
 @st.cache_data(ttl=3600)
-def variacao_anterior(competencia: str | None, regiao=None, uf=None) -> pd.Series:
+def variacao_anterior(competencia: str | None, regiao=None, uf=None,
+                      porte=None) -> pd.Series:
     """
     Mesmos indicadores na competência anterior, para o delta dos cartões.
 
@@ -218,7 +281,7 @@ def variacao_anterior(competencia: str | None, regiao=None, uf=None) -> pd.Serie
     anteriores = [c for c in listar_competencias() if c < competencia]
     if not anteriores:
         return pd.Series(dtype="object")
-    return indicadores_gerais(anteriores[-1], regiao, uf)
+    return indicadores_gerais(anteriores[-1], regiao, uf, porte)
 
 
 @st.cache_data(ttl=3600)
@@ -369,7 +432,7 @@ def leitos_por_tipo_gestao(competencia: str | None, regiao=None,
 
 @st.cache_data(ttl=3600)
 def capacidade_x_demanda(competencia: str | None, regiao=None,
-                         uf=None) -> pd.DataFrame:
+                         uf=None, porte=None) -> pd.DataFrame:
     """Capacidade instalada contra demanda, por região ou por UF."""
     dimensao = "uf" if (regiao or uf) else "regiao"
     sql = f"""
@@ -385,28 +448,38 @@ def capacidade_x_demanda(competencia: str | None, regiao=None,
     """
     sql, params = _competencia(sql, {}, competencia)
     sql, params = _filtrar(sql, params, regiao, uf)
+    sql, params = _porte(sql, params, porte)
     return query(sql + f" GROUP BY {dimensao} ORDER BY leitos_sus DESC", params)
 
 
 @st.cache_data(ttl=3600)
-def matriz_pressao(competencia: str) -> pd.DataFrame:
+def matriz_pressao(competencia: str, regiao=None, uf=None,
+                   porte=None) -> pd.DataFrame:
     """
-    Matriz região x faixa de pressão: quantos municípios em cada célula.
+    Matriz território x faixa de pressão: quantos municípios em cada célula.
+
+    A linha acompanha o recorte, como em capacidade_x_demanda: sem filtro
+    territorial ela é a região; com região ou UF escolhida, passa a ser a
+    UF. Manter a região sob filtro daria uma matriz de uma linha só, que
+    não é matriz — e esconderia a diferença entre os estados de dentro do
+    recorte, que é justamente o que se quer ver depois de filtrar.
 
     NOTA DE ESCOPO: a tela de referência usa região x especialidade de
     leito. Isso exigiria TP_LEITO preservado na Silver, o que a extração
     atual agrega antes de gravar. Enquanto essa coluna não existir, a
     matriz usa a faixa do ICPA, que é a dimensão disponível.
     """
+    dimensao = "uf" if (regiao or uf) else "regiao"
     sql = f"""
-        SELECT regiao, faixa_pressao,
+        SELECT {dimensao} AS dimensao, faixa_pressao,
                ROUND({_por_mes("COUNT(*)", competencia)}) AS municipios,
                ROUND(AVG(icpa), 1)                       AS icpa_medio
           FROM gold_icpa_classificado
-         WHERE regiao IS NOT NULL
+         WHERE {dimensao} IS NOT NULL
     """
     sql, params = _competencia(sql, {}, competencia)
-    return query(sql + " GROUP BY regiao, faixa_pressao", params)
+    sql, params = _filtrar(sql, params, regiao, uf, porte)
+    return query(sql + f" GROUP BY {dimensao}, faixa_pressao", params)
 
 
 @st.cache_data(ttl=3600)
@@ -513,7 +586,7 @@ def distribuicao_faixas(competencia: str | None, regiao=None, uf=None,
 
 @st.cache_data(ttl=3600)
 def hospitais_criticos(competencia: str | None, regiao=None, uf=None,
-                       minimo_internacoes: int = 50,
+                       porte=None, minimo_internacoes: int = 50,
                        limite: int = 30) -> pd.DataFrame:
     """
     Estabelecimentos com maior giro de leito.
@@ -535,6 +608,7 @@ def hospitais_criticos(competencia: str | None, regiao=None, uf=None,
         sql, params = _filtrar(
             sql, {"comp": competencia, "minimo": minimo_internacoes}, regiao, uf
         )
+        sql, params = _porte_do_municipio(sql, params, porte)
         params["limite"] = limite
         return query(
             sql + " ORDER BY internacoes_por_leito DESC FETCH FIRST :limite ROWS ONLY",
@@ -558,6 +632,7 @@ def hospitais_criticos(competencia: str | None, regiao=None, uf=None,
          WHERE leitos_sus > 0
     """
     sql, params = _filtrar(sql, {"minimo": minimo_internacoes}, regiao, uf)
+    sql, params = _porte_do_municipio(sql, params, porte)
     sql += """
          GROUP BY cnes
         HAVING SUM(internacoes) / COUNT(DISTINCT competencia) >= :minimo
@@ -571,7 +646,7 @@ def hospitais_criticos(competencia: str | None, regiao=None, uf=None,
 
 @st.cache_data(ttl=3600)
 def vazios_assistenciais(competencia: str | None, regiao=None, uf=None,
-                         populacao_minima: int = 10000,
+                         porte=None, populacao_minima: int = 10000,
                          limite: int = 40) -> pd.DataFrame:
     """
     Municípios sem nenhum leito SUS, com a evasão correspondente.
@@ -603,6 +678,7 @@ def vazios_assistenciais(competencia: str | None, regiao=None, uf=None,
             sql, {"comp": competencia, "popmin": populacao_minima}, regiao, uf,
             alias="f",
         )
+        sql, params = _porte(sql, params, porte, alias="f")
         params["limite"] = limite
         return query(
             sql + " ORDER BY f.populacao DESC FETCH FIRST :limite ROWS ONLY", params
@@ -629,6 +705,7 @@ def vazios_assistenciais(competencia: str | None, regiao=None, uf=None,
            AND f.populacao >= :popmin
     """
     sql, params = _filtrar(sql, {"popmin": populacao_minima}, regiao, uf, alias="f")
+    sql, params = _porte(sql, params, porte, alias="f")
     sql += " GROUP BY f.cod_municipio"
     params["limite"] = limite
     return query(
@@ -637,7 +714,7 @@ def vazios_assistenciais(competencia: str | None, regiao=None, uf=None,
 
 
 @st.cache_data(ttl=3600)
-def evasao(competencia: str | None, regiao=None, uf=None,
+def evasao(competencia: str | None, regiao=None, uf=None, porte=None,
            minimo: int = 100, limite: int = 30) -> pd.DataFrame:
     """
     Deslocamento de pacientes por município de origem.
@@ -656,6 +733,7 @@ def evasao(competencia: str | None, regiao=None, uf=None,
                AND internacoes_residentes >= :minimo
         """
         sql, params = _filtrar(sql, {"comp": competencia, "minimo": minimo}, regiao, uf)
+        sql, params = _porte(sql, params, porte)
         params["limite"] = limite
         return query(
             sql + " ORDER BY taxa_evasao DESC FETCH FIRST :limite ROWS ONLY", params
@@ -683,6 +761,7 @@ def evasao(competencia: str | None, regiao=None, uf=None,
          WHERE 1 = 1
     """
     sql, params = _filtrar(sql, {"minimo": minimo}, regiao, uf)
+    sql, params = _porte(sql, params, porte)
     sql += """
          GROUP BY cod_municipio
         HAVING SUM(internacoes_residentes)

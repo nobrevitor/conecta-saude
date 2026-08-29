@@ -624,7 +624,7 @@ def barras_horizontais(dados: pd.DataFrame, categoria: str, valor: str,
     # a ordenação por campo não sobrevive a essa fusão de forma
     # confiável, ainda mais com encoding de cor no meio, que liga o
     # empilhamento. Com a lista, a ordem é dado, não inferência: o
-    # primeiro item fica no topo. É o mesmo caminho de barras_sobrepostas.
+    # primeiro item fica no topo. É o mesmo caminho de barras_agrupadas.
     ordem = None
     if ordenar:
         ordem = (
@@ -656,39 +656,46 @@ def barras_horizontais(dados: pd.DataFrame, categoria: str, valor: str,
     return _acabamento((barras + texto).properties(height=alt.Step(passo)))
 
 
-def barras_sobrepostas(dados: pd.DataFrame, categoria: str, medidas, *,
-                       passo: int = 38, titulo_valor: str = "",
-                       titulo_categoria: str | None = None, dicas_extra=()):
+def barras_agrupadas(dados: pd.DataFrame, categoria: str, medidas, *,
+                     passo: int = 44, titulo_valor: str = "",
+                     titulo_categoria: str | None = None, dicas_extra=()):
     """
-    Duas medidas sobrepostas na mesma barra e no mesmo eixo.
+    Duas medidas por categoria, uma barra colada embaixo da outra.
 
     `medidas` é uma lista de dois (campo, título, coluna_rótulo). A
-    primeira é a medida de referência e vai à frente, em barra fina e
-    escura; a segunda é o contexto e vai atrás, em barra larga e clara.
-    As duas ganham rótulo direto: comprimento diz a proporção, o número
-    diz o valor, e nenhuma das duas leituras depende do mouse.
+    primeira é a medida de referência, em barra escura; a segunda é o
+    contexto, em barra clara. Dentro de cada categoria a de contexto vai
+    em cima e a de referência logo abaixo, sem respiro entre elas — o par
+    se lê como um bloco só, e a diferença de comprimento entre as duas é
+    a leitura que interessa.
 
-    A sobreposição só funciona porque as duas grandezas são comparáveis:
-    por região os leitos ficam entre 27% e 35% das internações, então a
-    barra da frente ocupa cerca de um terço da de trás e as duas se leem
-    juntas. Fossem ordens de grandeza distintas, a série menor viraria um
-    traço colado no eixo — e a saída seria um painel por medida, nunca um
-    segundo eixo y, que alinharia as duas séries num ponto arbitrário.
+    Antes as duas dividiam a mesma faixa, sobrepostas. Funcionava como
+    proporção, mas obrigava o número da barra de dentro a cair sobre a
+    barra de fora, e o par exigia um instante para ser desmontado pelo
+    olho. Agrupadas, cada barra tem a própria linha, o próprio rótulo em
+    campo limpo e a mesma escala.
 
     Um eixo só, uma escala só: a comparação de comprimento é direta e o
     leitor não precisa conferir dois conjuntos de marcações.
+
+    `passo` é a altura do GRUPO — as duas barras mais o respiro que as
+    separa do grupo seguinte —, e não a de uma barra.
     """
     (campo_frente, titulo_frente, rotulo_frente) = medidas[0]
     (campo_fundo, titulo_fundo, rotulo_fundo) = medidas[1]
 
-    # Formato longo com um registro por medida, para o eixo de valor e a
-    # legenda saírem de um campo só — é o que garante a escala partilhada.
+    # Formato longo com um registro por medida, para o eixo de valor, a
+    # legenda e o agrupamento saírem de um campo só — é o que garante a
+    # escala partilhada.
     colunas_carregadas = [rotulo_frente, rotulo_fundo, *(c for c, _ in dicas_extra)]
     partes = []
-    for campo, titulo, _ in (medidas[0], medidas[1]):
+    for campo, titulo, rotulo in (medidas[0], medidas[1]):
         parte = dados[[categoria, *colunas_carregadas]].copy()
         parte["medida"] = titulo
         parte["valor"] = pd.to_numeric(dados[campo], errors="coerce")
+        # O rótulo da própria medida, para o texto sair de uma coluna só
+        # em vez de uma camada por medida.
+        parte["rotulo"] = dados[rotulo].astype(str)
         partes.append(parte)
     longo = pd.concat(partes, ignore_index=True)
 
@@ -696,8 +703,8 @@ def barras_sobrepostas(dados: pd.DataFrame, categoria: str, medidas, *,
         dados.sort_values(campo_fundo, ascending=False)[categoria]
         .astype(str).tolist()
     )
-    escala = alt.Scale(domain=[titulo_fundo, titulo_frente],
-                       range=[COR_CONTEXTO, COR_PRINCIPAL])
+    dentro_do_grupo = [titulo_fundo, titulo_frente]
+    escala = alt.Scale(domain=dentro_do_grupo, range=[COR_CONTEXTO, COR_PRINCIPAL])
     dicas = [
         alt.Tooltip(f"{categoria}:N", title=""),
         alt.Tooltip(f"{rotulo_fundo}:N", title=titulo_fundo),
@@ -707,47 +714,30 @@ def barras_sobrepostas(dados: pd.DataFrame, categoria: str, medidas, *,
     base = alt.Chart(longo).encode(
         y=alt.Y(f"{categoria}:N", sort=ordem,
                 axis=_eixo_categoria(titulo_categoria)),
+        # paddingInner=0 encosta uma barra na outra dentro do grupo. O
+        # respiro fica entre grupos, que é onde ele separa coisas
+        # diferentes; entre as duas medidas do mesmo território, não.
+        yOffset=alt.YOffset("medida:N", sort=dentro_do_grupo,
+                            scale=alt.Scale(paddingInner=0)),
         x=alt.X("valor:Q", axis=_eixo_valor(titulo_valor),
                 scale=_folga(longo, "valor", 1.16)),
-        color=alt.Color("medida:N", scale=escala, sort=[titulo_fundo, titulo_frente],
+        color=alt.Color("medida:N", scale=escala, sort=dentro_do_grupo,
                         legend=alt.Legend(title=None, orient="top")),
         tooltip=dicas,
     )
 
-    fundo = (
-        base.transform_filter(alt.datum.medida == titulo_fundo)
-        .mark_bar(size=round(passo * 0.62), cornerRadiusEnd=4)
-    )
-    frente = (
-        base.transform_filter(alt.datum.medida == titulo_frente)
-        .mark_bar(size=round(passo * 0.26), cornerRadiusEnd=3)
-    )
-    # As duas barras levam o próprio número. Sem o da frente, a medida de
-    # referência existiria só como comprimento dentro da barra de contexto
-    # — legível apenas na dica, que exige passar o mouse.
-    #
-    # O rótulo de trás fica fora da barra, em tinta suave. O da frente cai
-    # sobre a barra de contexto, que é clara o bastante para sustentar
-    # texto escuro; vai em tinta cheia e um pouco mais forte, para não se
-    # confundir com o fundo colorido. Os dois ficam na mesma linha da
-    # faixa, em posições distintas do eixo, porque é a distância entre
-    # eles que mostra a folga entre capacidade e demanda.
-    rotulo_de_tras = (
-        base.transform_filter(alt.datum.medida == titulo_fundo)
-        .mark_text(align="left", baseline="middle", dx=6, fontSize=11,
-                   color=COR_TINTA_SUAVE)
-        .encode(text=f"{rotulo_fundo}:N", color=alt.value(COR_TINTA_SUAVE))
-    )
-    rotulo_da_frente = (
-        base.transform_filter(alt.datum.medida == titulo_frente)
-        .mark_text(align="left", baseline="middle", dx=6, fontSize=11,
-                   fontWeight=600, color=COR_TINTA)
-        .encode(text=f"{rotulo_frente}:N", color=alt.value(COR_TINTA))
-    )
+    barras = base.mark_bar(cornerRadiusEnd=3)
+    # Cada barra leva o próprio número, agora sempre em campo limpo: as
+    # duas terminam em pontos distintos e nenhuma passa por cima da outra.
+    rotulos = base.mark_text(
+        align="left", baseline="middle", dx=6, fontSize=11,
+    ).encode(text="rotulo:N", color=alt.value(COR_TINTA_SUAVE))
 
+    # Altura em pixels, e não em Step: com o agrupamento o step passa a
+    # valer para a subfaixa de cada barra, e o cartão da grade precisa
+    # saber a altura do conjunto para o gráfico não transbordar.
     return _acabamento(
-        (fundo + frente + rotulo_de_tras + rotulo_da_frente)
-        .properties(height=alt.Step(passo))
+        (barras + rotulos).properties(height=len(ordem) * passo)
     )
 
 
@@ -809,7 +799,8 @@ def series_temporais(dados: pd.DataFrame, x: str, series, *, altura: int = 170):
 
 
 def mapa_calor(dados: pd.DataFrame, linha: str, coluna: str, valor: str,
-               rotulo: str, *, ordem_coluna=None, titulo_valor: str = ""):
+               rotulo: str, *, ordem_coluna=None, titulo_valor: str = "",
+               altura_cartao: int | None = None):
     """
     Grade categoria x categoria com a contagem em cada célula.
 
@@ -819,6 +810,16 @@ def mapa_calor(dados: pd.DataFrame, linha: str, coluna: str, valor: str,
     informações no mesmo canal, e verde contra vermelho é justamente o
     par que se perde no daltonismo mais comum.
     """
+    # Com `altura_cartao`, o passo encolhe para o número de linhas caber.
+    # O desconto é maior que o de passo_barras porque esta grade gasta
+    # altura em dois lugares que o gráfico de barras não tem: os rótulos
+    # das faixas no topo e a régua de cor no rodapé. O teto de 38 mantém
+    # a aparência de sempre quando sobra espaço.
+    linhas = max(int(dados[linha].nunique()), 1)
+    passo = 38
+    if altura_cartao:
+        passo = max(22, min(38, (altura_util(altura_cartao) - 66) // linhas))
+
     maximo = pd.to_numeric(dados[valor], errors="coerce").max()
     limiar = float(maximo) * 0.6 if maximo is not None and not pd.isna(maximo) else 0
 
@@ -843,7 +844,7 @@ def mapa_calor(dados: pd.DataFrame, linha: str, coluna: str, valor: str,
         color=alt.condition(alt.datum[valor] > limiar,
                             alt.value(COR_SUPERFICIE), alt.value(COR_TINTA)),
     )
-    return _acabamento((celulas + numeros).properties(height=alt.Step(38)))
+    return _acabamento((celulas + numeros).properties(height=alt.Step(passo)))
 
 
 def dispersao(dados: pd.DataFrame, x: str, y: str, *, tamanho: str, cor: str,
