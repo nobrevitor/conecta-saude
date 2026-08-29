@@ -431,10 +431,25 @@ def leitos_por_tipo_gestao(competencia: str | None, regiao=None,
 # =====================================================================
 
 @st.cache_data(ttl=3600)
-def capacidade_x_demanda(competencia: str | None, regiao=None,
-                         uf=None, porte=None) -> pd.DataFrame:
-    """Capacidade instalada contra demanda, por região ou por UF."""
-    dimensao = "uf" if (regiao or uf) else "regiao"
+def capacidade_x_demanda(competencia: str | None, regiao=None, uf=None,
+                         porte=None, limite: int = 7) -> pd.DataFrame:
+    """
+    Capacidade instalada contra demanda, na maior unidade que o recorte
+    ainda comporta: região sem filtro, UF com uma região escolhida,
+    município com uma UF escolhida.
+
+    A descida ao município é o que salva o cartão sob filtro de UF. Parar
+    na UF deixava o gráfico com um par de barras só — um retângulo, dois
+    números e nenhuma comparação para fazer. No município entra um
+    limite, porque um estado tem centenas deles e o cartão comporta sete
+    grupos; a ordem é pela demanda, que é a pergunta do cartão.
+    """
+    if uf:
+        dimensao = "municipio"
+    elif regiao:
+        dimensao = "uf"
+    else:
+        dimensao = "regiao"
     sql = f"""
         SELECT {dimensao} AS dimensao,
                {_por_mes("SUM(leitos_sus)", competencia)}                AS leitos_sus,
@@ -449,7 +464,11 @@ def capacidade_x_demanda(competencia: str | None, regiao=None,
     sql, params = _competencia(sql, {}, competencia)
     sql, params = _filtrar(sql, params, regiao, uf)
     sql, params = _porte(sql, params, porte)
-    return query(sql + f" GROUP BY {dimensao} ORDER BY leitos_sus DESC", params)
+    sql += f" GROUP BY {dimensao} ORDER BY internacoes DESC"
+    if dimensao == "municipio":
+        sql += " FETCH FIRST :limite ROWS ONLY"
+        params["limite"] = limite
+    return query(sql, params)
 
 
 @st.cache_data(ttl=3600)

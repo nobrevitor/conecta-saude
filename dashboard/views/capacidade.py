@@ -101,12 +101,21 @@ col_capacidade, col_matriz, col_leitura = st.columns([1.2, 1.2, 1], gap="small")
 altura_grafico = ui.altura_util(ui.ALTURA_CARTAO)
 
 with col_capacidade:
-    bloco = ui.painel("Capacidade e demanda", "Leitos SUS contra internações",
-                      chave="capdem", altura=ui.ALTURA_CARTAO)
     capacidade = db.capacidade_x_demanda(
         filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql,
         filtros.porte_sql,
     )
+    # A unidade da barra desce com o recorte: região, UF e, com um estado
+    # escolhido, os sete municípios de maior demanda daquele estado. O
+    # subtítulo diz qual delas está na tela.
+    if filtros.uf_sql:
+        descricao = f"Sete municípios de maior demanda · {filtros.uf_sql}"
+    elif filtros.regiao_sql:
+        descricao = "Leitos SUS contra internações, por UF"
+    else:
+        descricao = "Leitos SUS contra internações, por região"
+    bloco = ui.painel("Capacidade e demanda", descricao,
+                      chave="capdem", altura=ui.ALTURA_CARTAO)
     if capacidade.empty:
         bloco.info("Sem dados.")
     else:
@@ -116,17 +125,18 @@ with col_capacidade:
             rot_giro=lambda d: d["internacoes_por_leito"].map(
                 lambda v: f"{ui.num(v, 1)} por leito"),
         )
-        # Duas barras por região, coladas: a demanda em cima e a
+        # Duas barras por linha, coladas: a demanda em cima e a
         # capacidade que a absorveu logo abaixo, na mesma escala. O par
         # se lê como um bloco, e a diferença de comprimento entre as duas
-        # é o próprio indicador. O passo cabe na altura útil do cartão:
-        # cinco grupos de 44px mais eixo e legenda.
+        # é o próprio indicador. O passo é teto: com sete municípios ele
+        # encolhe sozinho para o conjunto caber no cartão.
         bloco.altair_chart(
             ui.barras_agrupadas(
                 capacidade, "dimensao",
                 [("leitos_sus", "Leitos SUS", "rot_leitos"),
                  ("internacoes", "Internações", "rot_internacoes")],
-                passo=44, dicas_extra=[("rot_giro", "Giro")],
+                passo=44, altura_cartao=ui.ALTURA_CARTAO,
+                dicas_extra=[("rot_giro", "Giro")],
             ),
             width="stretch", theme=None,
         )

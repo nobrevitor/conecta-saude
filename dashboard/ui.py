@@ -676,7 +676,8 @@ def barras_horizontais(dados: pd.DataFrame, categoria: str, valor: str,
 
 
 def barras_agrupadas(dados: pd.DataFrame, categoria: str, medidas, *,
-                     passo: int = 44, titulo_valor: str = "",
+                     passo: int = 44, altura_cartao: int | None = None,
+                     titulo_valor: str = "",
                      titulo_categoria: str | None = None, dicas_extra=()):
     """
     Duas medidas por categoria, uma barra colada embaixo da outra.
@@ -755,6 +756,14 @@ def barras_agrupadas(dados: pd.DataFrame, categoria: str, medidas, *,
     # Altura em pixels, e não em Step: com o agrupamento o step passa a
     # valer para a subfaixa de cada barra, e o cartão da grade precisa
     # saber a altura do conjunto para o gráfico não transbordar.
+    #
+    # Com `altura_cartao`, o passo encolhe para o número de grupos caber.
+    # O desconto de 55px é o que fica FORA do desenho: o eixo de valor
+    # embaixo e a legenda das duas medidas no topo. `passo` vira teto,
+    # para nada mudar quando sobra espaço.
+    if altura_cartao and ordem:
+        passo = max(20, min(passo, (altura_util(altura_cartao) - 55) // len(ordem)))
+
     return _acabamento(
         (barras + rotulos).properties(height=len(ordem) * passo)
     )
