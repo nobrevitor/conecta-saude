@@ -111,6 +111,22 @@ st.markdown(
           border-top-left-radius: 0;
       }
 
+      /* ---------- Linha da série e do ranking ---------- */
+      /* Os dois cartões dessa linha crescem com o conteúdo, para nenhum
+         gráfico ganhar rolagem própria. Sem o esticar abaixo, o mais
+         baixo terminaria antes do outro e a linha sairia em degrau. É a
+         mesma trava da fita de indicadores, pelo mesmo motivo: a altura
+         precisa atravessar toda a pilha de invólucros entre a coluna e o
+         cartão, porque um elo em altura automática já interrompe. */
+      .st-key-linha_tempo [data-testid="stHorizontalBlock"] {
+          align-items: stretch;
+      }
+      .st-key-linha_tempo [data-testid="stColumn"],
+      .st-key-linha_tempo [data-testid="stColumn"] > div,
+      .st-key-linha_tempo [data-testid="stVerticalBlock"] {
+          height: 100%;
+      }
+
       /* ---------- Cartões da grade ---------- */
       /* A borda vem do próprio st.container(border=True); daqui sai só o
          relevo, que é o que separa cartão de fundo num painel de BI. */

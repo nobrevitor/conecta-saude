@@ -217,11 +217,17 @@ with gestao_col:
 # Linha 2 · série no tempo e ranking
 # ---------------------------------------------------------------------
 
-serie_col, ranking_col = st.columns([1.6, 1], gap="small")
+# Os dois cartões desta linha crescem com o conteúdo, em vez de recortá-lo:
+# a série empilha dois painéis e a tabela lista dez linhas, e nenhum dos
+# dois cabia na altura fixa — o excedente virava rolagem dentro do bloco.
+# O alinhamento passa a vir do contêiner nomeado, cujo CSS no app.py
+# estica as duas colunas até a mais alta da linha.
+linha_tempo = st.container(key="linha_tempo")
+serie_col, ranking_col = linha_tempo.columns([1.6, 1], gap="small")
 
 with serie_col:
     bloco = ui.painel("Evolução mensal", "Doze competências de 2024",
-                      chave="serie", altura=ui.ALTURA_CARTAO_BAIXO)
+                      chave="serie")
     serie = db.evolucao_mensal(filtros.regiao_sql, filtros.uf_sql)
     if serie.empty:
         bloco.info("Sem dados.")
@@ -242,6 +248,9 @@ with serie_col:
                 [("internacoes", "Internações", "rot_internacoes"),
                  ("permanencia_media", "Permanência média (dias)",
                   "rot_permanencia")],
+                # Não é mais teto, e sim proporção: metade da altura útil
+                # do cartão baixo, descontado o eixo que os dois painéis
+                # dividem. O cartão acompanha o que sair daqui.
                 altura=(ui.altura_util(ui.ALTURA_CARTAO_BAIXO) - 46) // 2,
             ),
             width="stretch", theme=None,
@@ -253,7 +262,7 @@ with ranking_col:
     # o que não é ranking nenhum.
     titulo_topo = ("Top municípios por internações" if filtros.uf_sql
                    else "Top UFs por internações")
-    bloco = ui.painel(titulo_topo, chave="topo", altura=ui.ALTURA_CARTAO_BAIXO)
+    bloco = ui.painel(titulo_topo, chave="topo")
 
     if not dados_mapa.empty:
         topo = (
@@ -284,8 +293,10 @@ with ranking_col:
             }
         bloco.dataframe(
             topo[colunas],
-            width="stretch", hide_index=True,
-            height=ui.altura_util(ui.ALTURA_CARTAO_BAIXO),
+            # Altura automática: são dez linhas, e a tabela mostra as dez.
+            # Viewport fixo aqui só devolveria a rolagem para dentro do
+            # cartão, que é o que se quis tirar.
+            width="stretch", hide_index=True, height="auto",
             column_config={
                 "internacoes": st.column_config.NumberColumn(
                     "Internações", format="localized"),
