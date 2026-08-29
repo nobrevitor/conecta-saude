@@ -763,8 +763,15 @@ def barras_agrupadas(dados: pd.DataFrame, categoria: str, medidas, *,
 def series_temporais(dados: pd.DataFrame, x: str, series, *, altura: int = 170):
     """
     Séries no tempo, uma por painel, compartilhando o eixo horizontal.
-    `series` é uma lista de (campo, título, coluna_rótulo). Devolve UMA
-    LISTA de gráficos, para a view empilhar com uma chamada cada.
+    `series` é uma lista de (campo, título, coluna_rótulo). Devolve uma
+    lista de (título, gráfico): o título sai FORA do gráfico, escrito
+    pela view, e não como `title` do Vega.
+
+    O motivo é de layout: o autosize do Vega ajusta a área de desenho,
+    mas o título fica fora dessa conta. Com dois gráficos empilhados, o
+    de cima terminava por cima do título do de baixo. Escrito pela view,
+    o título é um elemento do Streamlit como outro qualquer, e o respiro
+    entre eles passa a ser o da própria página.
 
     Grandezas de ordens diferentes ganham painéis separados em vez de
     um segundo eixo y, que alinharia as curvas num ponto arbitrário.
@@ -819,13 +826,14 @@ def series_temporais(dados: pd.DataFrame, x: str, series, *, altura: int = 170):
             .encode(text=f"{rotulo}:N")
             .transform_filter(alt.datum[x] == ultimo)
         )
-        graficos.append(
+        graficos.append((
+            titulo,
             _acabamento(
                 (regua + linha + marcadores + fim)
-                .properties(height=altura, title=titulo)
+                .properties(height=altura)
                 .add_params(seletor)
-            )
-        )
+            ),
+        ))
 
     return graficos
 

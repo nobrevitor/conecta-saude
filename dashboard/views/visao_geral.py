@@ -242,17 +242,26 @@ with serie_col:
         # ponto arbitrário, sugerindo uma correlação que o dado não afirma.
         # Dois gráficos separados, empilhados: cada um é uma camada, que
         # é a forma que o Streamlit ajusta à largura do contêiner. O
-        # desconto de 96px cobre os dois títulos de painel, o respiro
-        # entre eles e o eixo de competências embaixo do segundo.
+        # título de cada painel é escrito aqui, e não dentro do gráfico —
+        # ver ui.series_temporais. O desconto de 96px cobre os dois
+        # títulos, o respiro entre os elementos e o eixo de competências
+        # embaixo do segundo.
         graficos = ui.series_temporais(
             serie, "rotulo",
             [("internacoes", "Internações", "rot_internacoes"),
              ("permanencia_media", "Permanência média (dias)",
               "rot_permanencia")],
-            altura=(ui.altura_util(ui.ALTURA_CARTAO_TABELA) - 96) // 2,
+            altura=(ui.altura_util(ui.ALTURA_CARTAO_TABELA) - 110) // 2,
         )
         with bloco:
-            for grafico in graficos:
+            for indice, (titulo_painel, grafico) in enumerate(graficos):
+                if indice:
+                    # Respiro antes do painel de baixo: o de cima termina
+                    # no próprio desenho, e sem esse espaço o título do
+                    # seguinte encosta nele. Desce título e gráfico juntos.
+                    st.markdown('<div style="height:14px"></div>',
+                                unsafe_allow_html=True)
+                st.caption(titulo_painel)
                 st.altair_chart(grafico, width="stretch", theme=None)
 
 with ranking_col:
