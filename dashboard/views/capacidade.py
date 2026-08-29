@@ -373,74 +373,93 @@ else:
     )
 
 # ---------------------------------------------------------------------
-# Linha 4 · estabelecimentos e deslocamento
+# Linha 4 · modelo analítico e deslocamento
 # ---------------------------------------------------------------------
+# Dois cartões dividindo a página. O do modelo leva um pouco mais de
+# largura porque guarda dois gráficos empilhados, e a linha inteira usa a
+# altura do cartão alto para os dois caberem sem rolagem.
 
-col_hospitais, col_evasao = st.columns(2, gap="small")
-altura_tabela = ui.altura_util(ui.ALTURA_CARTAO)
+col_cluster, col_evasao = st.columns([1.3, 1], gap="small")
+altura_tabela = ui.altura_util(ui.ALTURA_CARTAO_ALTO)
 
-with col_hospitais:
-    bloco = ui.painel("Estabelecimentos sob pressão",
-                      "Hospitais com 50 ou mais internações",
-                      chave="hospitais", altura=ui.ALTURA_CARTAO)
-    hospitais = db.hospitais_criticos(
-        filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql,
-        filtros.porte_sql,
+with col_cluster:
+    # A gold_cluster guarda a atribuição de UMA competência, então este
+    # cartão não segue o filtro de mês — o subtítulo diz qual é. Região,
+    # UF e porte seguem: eles não mudam o grupo de cada município, apenas
+    # restringem quem entra nas médias.
+    perfis = db.perfis_de_cluster(
+        filtros.regiao_sql, filtros.uf_sql, filtros.porte_sql
     )
-    if hospitais.empty:
-        bloco.info("Sem hospitais que atendam aos critérios.")
+    competencia_modelo = (
+        ui.competencia_legivel(perfis["competencia"].iloc[0])
+        if not perfis.empty else "—"
+    )
+    bloco = ui.painel(
+        "Modelo analítico · clusterização",
+        f"Perfis de município do agrupamento · competência {competencia_modelo}",
+        chave="cluster", altura=ui.ALTURA_CARTAO_ALTO,
+    )
+    if perfis.empty:
+        bloco.info("Sem municípios agrupados no recorte.")
     else:
-        hospitais = hospitais.assign(
-            rotulo_hospital=lambda d: d["municipio"] + " · " + d["uf"],
-            rot_internacoes=lambda d: d["internacoes"].map(ui.num),
-            rot_leitos=lambda d: d["leitos_sus"].map(ui.num),
-            rot_por_leito=lambda d: d["internacoes_por_leito"].map(
-                lambda v: ui.num(v, 2)),
-            rot_permanencia=lambda d: d["permanencia_media"].map(
-                lambda v: f"{ui.num(v, 1)} dias"),
+        ordem_perfis = perfis["perfil"].tolist()   # já vem por ICPA médio
+        perfis = perfis.assign(
+            rot_icpa=lambda d: d["icpa_medio"].map(lambda v: ui.num(v, 1)),
+            rot_municipios=lambda d: d["municipios"].map(ui.num),
+            rot_populacao=lambda d: d["populacao_media"].map(ui.num),
         )
+
+        # A matriz compara os quatro eixos do modelo entre os grupos. As
+        # três primeiras variáveis são componentes do ICPA, já normalizados
+        # de 0 a 1; a oferta de leitos é uma taxa por 10 mil habitantes,
+        # de outra ordem de grandeza. Numa escala de cor só, a oferta
+        # pintaria tudo e as outras três sairiam brancas.
+        #
+        # Por isso a COR é a posição da célula dentro da própria linha —
+        # o quadrado mais escuro é o grupo mais alto naquela variável — e
+        # o NÚMERO impresso continua sendo a média de verdade. Comparar
+        # linhas pela cor não faria sentido; comparar dentro de uma linha,
+        # que é a pergunta do cartão, faz.
+        celulas = []
+        for coluna, rotulo_variavel, casas in ui.VARIAVEIS_CLUSTER:
+            valores = perfis[coluna].astype(float)
+            piso, teto = valores.min(), valores.max()
+            vao = teto - piso
+            for perfil, valor in zip(perfis["perfil"], valores):
+                celulas.append({
+                    "variavel": rotulo_variavel,
+                    "perfil": perfil,
+                    "intensidade": 0.5 if vao == 0 else (valor - piso) / vao,
+                    "rotulo": ui.num(valor, casas),
+                })
+        matriz_cluster = pd.DataFrame(celulas)
+
         with bloco:
-            aba_grafico, aba_tabela = st.tabs(["Dispersão", "Tabela"])
-            with aba_grafico:
-                st.altair_chart(
-                    ui.dispersao(
-                        hospitais, "leitos_sus", "internacoes_por_leito",
-                        tamanho="internacoes", cor="permanencia_media",
-                        titulo_x="Leitos SUS", titulo_y="Internações por leito",
-                        titulo_cor="Permanência", altura=altura_tabela - 96,
-                        dicas=[ui.alt.Tooltip("rotulo_hospital:N", title=""),
-                               ui.alt.Tooltip("cnes:N", title="CNES"),
-                               ui.alt.Tooltip("rot_leitos:N", title="Leitos SUS"),
-                               ui.alt.Tooltip("rot_internacoes:N",
-                                              title="Internações"),
-                               ui.alt.Tooltip("rot_por_leito:N", title="Int./leito"),
-                               ui.alt.Tooltip("rot_permanencia:N",
-                                              title="Permanência")],
-                    ),
-                    width="stretch", theme=None,
-                )
-            with aba_tabela:
-                st.dataframe(
-                    hospitais[["cnes", "municipio", "uf", "internacoes",
-                               "leitos_sus", "internacoes_por_leito"]],
-                    width="stretch", hide_index=True, height=altura_tabela - 40,
-                    column_config={
-                        "cnes": st.column_config.TextColumn("CNES", width="small"),
-                        "municipio": st.column_config.TextColumn("Município"),
-                        "uf": st.column_config.TextColumn("UF", width="small"),
-                        "internacoes": st.column_config.NumberColumn(
-                            "Internações", format="localized"),
-                        "leitos_sus": st.column_config.NumberColumn(
-                            "Leitos", format="localized"),
-                        "internacoes_por_leito": st.column_config.NumberColumn(
-                            "Int./leito", format="%.2f"),
-                    },
-                )
+            st.altair_chart(
+                ui.barras_horizontais(
+                    perfis, "perfil", "icpa_medio", "rot_icpa",
+                    titulo_valor="ICPA médio do grupo", passo=32,
+                    dicas=[ui.alt.Tooltip("perfil:N", title=""),
+                           ui.alt.Tooltip("rot_icpa:N", title="ICPA médio"),
+                           ui.alt.Tooltip("rot_municipios:N", title="Municípios"),
+                           ui.alt.Tooltip("rot_populacao:N", title="População média")],
+                ),
+                width="stretch", theme=None,
+            )
+            st.altair_chart(
+                ui.mapa_calor(
+                    matriz_cluster, "variavel", "perfil", "intensidade", "rotulo",
+                    ordem_coluna=ordem_perfis, titulo_valor="Média do grupo",
+                    titulo_legenda="Mais claro a mais escuro: menor a maior na linha",
+                    passo=30,
+                ),
+                width="stretch", theme=None,
+            )
 
 with col_evasao:
     bloco = ui.painel("Deslocamento de pacientes",
                       "Internações fora do município de residência",
-                      chave="evasao", altura=ui.ALTURA_CARTAO)
+                      chave="evasao", altura=ui.ALTURA_CARTAO_ALTO)
     dados_evasao = db.evasao(
         filtros.competencia_sql, filtros.regiao_sql, filtros.uf_sql,
         filtros.porte_sql, minimo=100,
@@ -457,12 +476,13 @@ with col_evasao:
                               + " · " + d["uf_destino"].fillna(""),
         )
         with bloco:
-            aba_grafico, aba_tabela = st.tabs(["Doze maiores", "Tabela"])
+            aba_grafico, aba_tabela = st.tabs(["Quinze maiores", "Tabela"])
             with aba_grafico:
                 st.altair_chart(
                     ui.barras_horizontais(
-                        dados_evasao.head(12), "rotulo_origem", "taxa_evasao",
-                        "rot_taxa", titulo_valor="Taxa de evasão (%)", passo=19,
+                        dados_evasao.head(15), "rotulo_origem", "taxa_evasao",
+                        "rot_taxa", titulo_valor="Taxa de evasão (%)",
+                        passo=ui.passo_barras(ui.ALTURA_CARTAO_ALTO, 15),
                         dicas=[ui.alt.Tooltip("rotulo_origem:N", title="Origem"),
                                ui.alt.Tooltip("rot_taxa:N", title="Taxa de evasão"),
                                ui.alt.Tooltip("rot_fora:N", title="Internações fora"),
@@ -498,6 +518,14 @@ ui.rodape([
     "assistenciais.",
     "A **matriz de pressão** usa a faixa do ICPA porque a especialidade de "
     "leito (TP_LEITO) é agregada na extração antes de chegar à Silver.",
+    "O **modelo de clusterização** foi ajustado numa competência só, e a "
+    "atribuição de cada município vem gravada dela — por isso aquele cartão "
+    "não acompanha o filtro de competência, e diz no subtítulo a que mês se "
+    "refere. Na matriz, a cor compara os grupos DENTRO de cada linha: o "
+    "quadrado mais escuro é o grupo mais alto naquela variável, e o número "
+    "impresso é a média de verdade. Comparar linhas pela cor não vale, "
+    "porque demanda, uso e permanência são componentes normalizados do ICPA "
+    "e a oferta de leitos é uma taxa por 10 mil habitantes.",
     "**Deslocamento** considera apenas municípios com pelo menos 100 "
     "internações de residentes, para evitar distorção por volume baixo. Sem "
     "leito próprio a evasão tende a 100%: ela mede deslocamento, não a "

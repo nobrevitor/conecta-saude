@@ -585,6 +585,48 @@ def distribuicao_faixas(competencia: str | None, regiao=None, uf=None,
 
 
 @st.cache_data(ttl=3600)
+def perfis_de_cluster(regiao=None, uf=None, porte=None) -> pd.DataFrame:
+    """
+    Perfis do modelo de agrupamento, com as médias que descrevem cada um.
+
+    NÃO aceita competência, e isso é deliberado: o modelo foi ajustado
+    numa competência só, e a gold_cluster guarda a atribuição daquele
+    mês. Aceitar o filtro faria o cartão trocar de rótulo sem trocar de
+    agrupamento — mentiria sobre o que está na tela. A competência do
+    modelo volta na coluna `competencia`, para o cartão dizer qual é.
+
+    Os recortes territoriais e de porte entram normalmente: eles não
+    mexem em qual grupo cada município recebeu, apenas restringem quais
+    municípios entram nas médias de cada grupo.
+
+    CLUSTER é palavra reservada no Oracle, daí as aspas na coluna e o
+    apelido `grupo` na saída.
+    """
+    sql = """
+        SELECT c.perfil,
+               c."CLUSTER"                              AS grupo,
+               MAX(c.competencia)                       AS competencia,
+               COUNT(*)                                 AS municipios,
+               ROUND(AVG(i.icpa), 1)                    AS icpa_medio,
+               ROUND(AVG(i.componente_demanda), 3)      AS demanda,
+               ROUND(AVG(i.componente_uso), 3)          AS uso,
+               ROUND(AVG(i.componente_permanencia), 3)  AS permanencia,
+               ROUND(AVG(i.leitos_por_10mil_hab), 2)    AS oferta_leitos,
+               ROUND(AVG(i.populacao))                  AS populacao_media,
+               ROUND(AVG(i.internacoes))                AS internacoes_media
+          FROM gold_cluster c
+          JOIN gold_icpa_classificado i
+            ON i.cod_municipio = c.cod_municipio
+           AND i.competencia   = c.competencia
+         WHERE 1 = 1
+    """
+    sql, params = _filtrar(sql, {}, regiao, uf, porte, alias="i")
+    return query(
+        sql + ' GROUP BY c.perfil, c."CLUSTER" ORDER BY icpa_medio DESC', params
+    )
+
+
+@st.cache_data(ttl=3600)
 def hospitais_criticos(competencia: str | None, regiao=None, uf=None,
                        porte=None, minimo_internacoes: int = 50,
                        limite: int = 30) -> pd.DataFrame:

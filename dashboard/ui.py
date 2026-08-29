@@ -34,6 +34,20 @@ CORES_FAIXA = {
 
 PORTES = ["Todos", "Até 20 mil", "20 a 100 mil", "100 a 500 mil", "Acima de 500 mil"]
 
+# Eixos do modelo de agrupamento, na ordem em que a matriz os empilha:
+# (coluna da consulta, rótulo na tela, casas decimais).
+#
+# As três primeiras são os componentes do ICPA, normalizados de 0 a 1 na
+# construção do índice; a quarta é uma taxa por 10 mil habitantes. Duas
+# ordens de grandeza no mesmo quadro — por isso a matriz colore por
+# posição dentro da linha, e não pelo valor cru.
+VARIAVEIS_CLUSTER = (
+    ("demanda", "Demanda", 2),
+    ("uso", "Uso da capacidade", 2),
+    ("permanencia", "Permanência", 2),
+    ("oferta_leitos", "Oferta de leitos", 1),
+)
+
 # Opção "todas as competências" do filtro. Quando escolhida, as consultas
 # passam a devolver média mensal em vez do valor de um mês — a soma dos
 # doze responderia outra pergunta, e leito nem soma entre meses.
@@ -800,6 +814,7 @@ def series_temporais(dados: pd.DataFrame, x: str, series, *, altura: int = 170):
 
 def mapa_calor(dados: pd.DataFrame, linha: str, coluna: str, valor: str,
                rotulo: str, *, ordem_coluna=None, titulo_valor: str = "",
+               titulo_legenda: str | None = None, passo: int | None = None,
                altura_cartao: int | None = None):
     """
     Grade categoria x categoria com a contagem em cada célula.
@@ -816,9 +831,10 @@ def mapa_calor(dados: pd.DataFrame, linha: str, coluna: str, valor: str,
     # das faixas no topo e a régua de cor no rodapé. O teto de 38 mantém
     # a aparência de sempre quando sobra espaço.
     linhas = max(int(dados[linha].nunique()), 1)
-    passo = 38
-    if altura_cartao:
-        passo = max(22, min(38, (altura_util(altura_cartao) - 66) // linhas))
+    if passo is None:
+        passo = 38
+        if altura_cartao:
+            passo = max(22, min(38, (altura_util(altura_cartao) - 66) // linhas))
 
     maximo = pd.to_numeric(dados[valor], errors="coerce").max()
     limiar = float(maximo) * 0.6 if maximo is not None and not pd.isna(maximo) else 0
@@ -833,8 +849,13 @@ def mapa_calor(dados: pd.DataFrame, linha: str, coluna: str, valor: str,
     ).encode(
         color=alt.Color(f"{valor}:Q",
                         scale=alt.Scale(range=["#E8F1F4", COR_PRINCIPAL]),
-                        legend=alt.Legend(title=titulo_valor or None, orient="bottom",
-                                          gradientLength=140, format="~s")),
+                        legend=alt.Legend(
+                            # A régua de cor e a dica podem falar de coisas
+                            # diferentes: onde a cor mostra posição relativa,
+                            # a dica ainda traz o valor de verdade.
+                            title=(titulo_legenda if titulo_legenda is not None
+                                   else (titulo_valor or None)),
+                            orient="bottom", gradientLength=140, format="~s")),
         tooltip=[alt.Tooltip(f"{linha}:N", title=""),
                  alt.Tooltip(f"{coluna}:N", title="Faixa"),
                  alt.Tooltip(f"{rotulo}:N", title=titulo_valor or "Municípios")],
