@@ -55,11 +55,7 @@ perde poder de discriminação. Valores acima do p95 recebem 1.
 
 **Faixas.** Baixa (< 20), Moderada (20–40), Alta (40–60), Crítica (≥ 60).
 
-**Exclusões — e por que elas importam.** Município sem leito SUS ou sem produção
-hospitalar fica **fora** do índice. Não é pressão baixa: é ausência de serviço, que é outra
-categoria de problema. Esses municípios são sinalizados pelas colunas `sem_leito_sus` e
-`sem_producao_hospitalar` e tratados em seção própria do painel — os **vazios
-assistenciais**, medidos junto com a evasão que eles produzem.
+**Exclusões:** Município sem leito SUS ou sem produção hospitalar fica **fora** do índice. Não é pressão baixa: é ausência de serviço, que é outra categoria de problema. Esses municípios são sinalizados pelas colunas `sem_leito_sus` e `sem_producao_hospitalar` e tratados em seção própria do painel — os **vazios assistenciais**, medidos junto com a evasão que eles produzem.
 
 ---
 
@@ -90,25 +86,6 @@ flowchart LR
 O grão de toda a camada Gold é **(município, competência)**. A regra vale para todo JOIN
 entre tabelas Gold, que precisa casar `cod_municipio` **e** `competencia` — juntar só pelo
 município multiplica as linhas pelas doze competências.
-
-### Decisões que sustentam o modelo
-
-- **A dimensão vem primeiro no FROM.** `gold_fato_municipio` parte dos 5.571 municípios do
-  IBGE e traz os fatos por `LEFT JOIN`. Um `INNER JOIN` apagaria do painel exatamente o
-  município sem produção hospitalar, que é o achado central do projeto.
-- **Dois municípios por internação.** O SIH traz `MUNIC_RES` (onde o paciente mora) e
-  `MUNIC_MOV` (onde a internação aconteceu). Confundi-los inverte a conclusão do índice:
-  residência cruzada com a população mede **necessidade**; atendimento cruzado com os
-  leitos do CNES mede **carga**. A diferença agregada entre os dois é a **evasão
-  assistencial**, e é o que faz um município-polo pequeno aparecer com carga altíssima e
-  necessidade baixa — precisamente o caso que o índice precisa destacar.
-- **Agregar antes de guardar.** O SIH de 2024 são cerca de 12 milhões de linhas e 113
-  colunas, algo como 13 GB em memória se concatenado. A extração inverte a ordem: agrega
-  arquivo por arquivo e descarta o bruto. O pico de memória passa a ser o de um
-  estado-mês, não o do país inteiro — e o conjunto tratado inteiro cabe em ~16 MB de
-  Parquet.
-- **Todo denominador leva `NULLIF`.** Município sem leito ou sem internação é caso real, e
-  o `NULL` resultante significa "não aplicável", que é diferente de zero.
 
 ---
 
@@ -160,143 +137,41 @@ confere e executa. O perfil expõe ao modelo **apenas as tabelas da camada Gold*
 segurança e também qualidade, porque quanto menor o esquema apresentado, melhor o SQL
 gerado.
 
-**Duas barreiras antes de executar**, independentes de propósito: o SQL passa por uma
-verificação de somente-leitura no app (evita mensagem de erro feia na tela) e o usuário da
-aplicação tem apenas `SELECT` na Gold (esta é a que de fato protege).
-
-### O que os comentários das tabelas fazem
-Com `"comments": "true"` no perfil, o `DBMS_CLOUD_AI` envia os `COMMENT ON` ao modelo junto
-do esquema. Não é documentação decorativa. Sem o grão declarado no comentário, perguntado
-sobre pressão assistencial o modelo escrevia um JOIN só por `cod_municipio` e devolvia
-439.428 linhas onde deveriam sair 3.015 — sem erro e sem vazio, ou seja, **resposta errada
-com aparência de certa**. Por isso o grão e a regra de JOIN aparecem no comentário de toda
-tabela, e ainda são repetidos no prompt.
-
-### O filtro de competência e a armadilha da soma
-Quando o filtro é aberto para o ano inteiro, os volumes viram **média mensal**, nunca soma.
-Leito não é grandeza que soma entre meses: os 62 mil leitos de São Paulo em janeiro são os
-mesmos de fevereiro, e somá-los daria 750 mil. As razões, escritas como `SUM(a)/SUM(b)`,
-não precisam de tratamento — o fator doze aparece nos dois lados e se cancela, e o
-resultado já é a média ponderada do período. Contagens de entidade são o caso que engana:
-`COUNT(*)` sobre doze meses conta município-mês, não município.
-
 ---
 
 ## Estrutura do repositório
 
 ```text
 conecta-saude/
-├── Fontes de dados/                 notebooks de extração e carga
-│   ├── extracao_sih_sus_*.ipynb     SIH/SUS — internações (numerador)
-│   ├── extracao_cnes_*.ipynb        CNES — leitos e estabelecimentos (denominador)
-│   ├── extracao_ibge_*.ipynb        IBGE — população e hierarquia territorial
-│   ├── extracao_sigtap_*.ipynb      SIGTAP — dimensão de procedimentos
-│   ├── dicionario_de_dados_*.ipynb  gerador do dicionário (não escrito à mão)
-│   └── carga_autonomous_database_*.ipynb   gera os scripts SQL da carga
-├── sql/                             DDL e carga do Autonomous Database
-│   ├── 00_setup.sql                 schema, credencial do Object Storage, teste de acesso
-│   ├── 01_bronze.sql                tabelas externas sobre os Parquet do bucket
-│   ├── 02_silver.sql                tabelas físicas, tipadas, com PK e índices
-│   ├── 03_gold.sql                  fato municipal, evasão, hospital e o ICPA
-│   ├── 04_select_ai.sql             ACL de rede, credencial do LLM e perfil CONECTA_AI
-│   ├── 05_app_user.sql              usuário somente-leitura do dashboard e sinônimos
-│   ├── 06_recarga_sih.sql           TRUNCATE + INSERT para reprocessar o SIH
-│   └── 07_comentarios_gold.sql      dicionário da Gold que o Select AI lê
-├── dashboard/                       aplicação Streamlit
-│   ├── app.py                       navegação e estilo compartilhado
-│   ├── db.py                        pool de conexão, cache e toda a agregação em SQL
-│   ├── ai.py                        Select AI: prompt, barreira de leitura, execução
-│   ├── ui.py                        filtros, formatação, gráficos e mapa
-│   ├── views/                       as três páginas
-│   ├── geo/                         malha das UFs (IBGE), versionada de propósito
-│   └── docs/                        identidade visual
-└── dados/                           bruto e tratado (local)
-    └── tratado/_dicionario/         dicionário gerado
+├── Fontes de dados/                 
+│   ├── extracao_sih_sus_*.ipynb     
+│   ├── extracao_cnes_*.ipynb        
+│   ├── extracao_ibge_*.ipynb        
+│   ├── extracao_sigtap_*.ipynb      
+│   ├── dicionario_de_dados_*.ipynb  
+│   └── carga_autonomous_database_*.ipynb   
+├── sql/                             
+│   ├── 00_setup.sql                 
+│   ├── 01_bronze.sql                
+│   ├── 02_silver.sql                
+│   ├── 03_gold.sql                  
+│   ├── 04_select_ai.sql             
+│   ├── 05_app_user.sql                   
+│   └── 06_comentarios_gold.sql      
+├── dashboard/                       
+│   ├── app.py                       
+│   ├── db.py                        
+│   ├── ai.py                        
+│   ├── ui.py                        
+│   ├── views/                       
+│   ├── geo/                         
+│   └── docs/                        
+└── dados/                           
+    └── tratado/_dicionario/         
 ```
 
 > `dados/`, `sql/` e `referencias/` estão listados no `.gitignore`: os dados e os scripts de
 > banco são mantidos localmente, fora do controle de versão.
-
----
-
-## Como reproduzir
-
-### Pré-requisitos
-- Python 3.11+
-- Uma conta Oracle Cloud — o projeto inteiro cabe no **Always Free**: um Autonomous
-  Database e um bucket no Object Storage
-- Opcional: chave de API de um provedor de LLM, para o Select AI
-
-### 1 · Extração
-Rode os notebooks de `Fontes de dados/` nesta ordem: IBGE, CNES, SIGTAP, SIH e, por último,
-o dicionário de dados. Cada um baixa da fonte pública, trata e grava Parquet em
-`dados/tratado/`.
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install pandas pyarrow datasus-dbc dbfread jupyterlab
-```
-
-### 2 · Object Storage
-Suba `dados/tratado/` para o bucket espelhando a estrutura de prefixos esperada pelo
-`01_bronze.sql`: `bronze/cnes/`, `bronze/ibge/`, `bronze/sigtap/`, `silver/sih/` e
-`silver/cnes/`.
-
-### 3 · Banco
-Execute os scripts de `sql/` **em ordem e bloco a bloco** — não o arquivo inteiro de uma
-vez. Cada um traz no cabeçalho o que esperar, incluindo os erros normais (os `DROP` falham
-na primeira execução, por exemplo) e as consultas de validação, que conferem contagem de
-linhas e integridade referencial.
-
-O `00_setup.sql` e o `05_app_user.sql` precisam de **duas sessões**: parte como `ADMIN`,
-parte como `CONECTA`. Não dá para trocar de usuário no meio de um script — a conexão é
-estabelecida no login e vale até o logout.
-
-### 4 · Dashboard
-
-```bash
-pip install streamlit oracledb pandas altair pydeck
-streamlit run dashboard/app.py
-```
-
-As credenciais ficam em `dashboard/.streamlit/secrets.toml`, fora do controle de versão:
-
-```toml
-DB_USER = "pulso_app"
-DB_PASS = "..."
-DB_DSN  = "..."
-```
-
-O app conecta com o usuário `pulso_app`, que tem apenas `SELECT` na camada Gold. Isso não é
-formalidade: as credenciais vivem no painel do Streamlit Cloud e, se vazarem, o estrago é
-alguém ler dado público do DATASUS — não derrubar o banco na véspera da entrega.
-
-A conexão usa pool com `@st.cache_resource`, porque o Streamlit reexecuta o script inteiro a
-cada interação e o Always Free aceita no máximo 20 sessões simultâneas. As consultas são
-cacheadas com TTL de uma hora — os dados são batch e não mudam entre execuções.
-
-### Reprocessar o SIH
-Substitua os Parquet no bucket e rode `06_recarga_sih.sql`, depois **todo** o `03_gold.sql`.
-A Gold não pode ser remendada município a município: o ICPA normaliza com
-`PERCENTILE_CONT(0.95)` particionado por competência, então entrar com um estado inteiro
-desloca o teto do mês e muda o índice de todos os municípios daquela competência.
-
----
-
-## Notas de escopo e limitações
-
-- **Ocupação estimada** é aproximação: dias de permanência sobre dias-leito do mês
-  (leitos × 30). O SIH não informa data exata de ocupação.
-- A **matriz de pressão** usa faixa do ICPA por região. A versão por especialidade de leito
-  exigiria `TP_LEITO` preservado na Silver, que a extração atual agrega antes de gravar.
-- O **Select AI depende de provedor externo** de LLM, que não está incluído no Always Free.
-  O `04_select_ai.sql` traz o perfil configurado para OpenAI; trocar de provedor é editar o
-  atributo `provider` e a ACL de rede. Sem provedor, as duas páginas de painel continuam
-  funcionando por inteiro.
-- Recorte temporal: **2024 completo**, de 202401 a 202412. O modelo é dimensionado por
-  competência, então ampliar o período é acrescentar arquivos, não redesenhar o esquema.
-- O SIH usa apenas o grupo **RD** (AIH reduzida). Os grupos SP, ER e RJ ficam fora do MVP.
 
 ---
 
